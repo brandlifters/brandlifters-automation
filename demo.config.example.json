@@ -1,0 +1,12 @@
+{
+  "name": "dental-clinic-demo",
+  "industry": "Dental Clinic",
+  "title": "SmileBright Dental",
+  "description": "A modern, conversion-focused website for a dental clinic — featuring appointment booking, service listings, and patient testimonials.",
+  "tags": ["healthcare", "dental", "local-business"],
+  "primaryColor": "#2A9D8F",
+  "repoName": "demo-dental-clinic",
+  "vercelProjectName": "demo-dental-clinic",
+  "localPath": "../demos/dental-clinic",
+  "previewUrl": ""
+}
