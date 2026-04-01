@@ -26,136 +26,187 @@ You (manual)               Automation                    External Services
 
 ---
 
+## Folder layout (important)
+
+All commands are **always run from the automation repo**, not from the demo folder.
+
+```
+brandlifters-material/
+├── brandlifters-automation/   ← YOU ARE ALWAYS IN HERE when running commands
+│   ├── src/
+│   ├── .env
+│   ├── package.json
+│   └── ...
+└── brandlifters-demo/
+    └── barber-demo/           ← demo sites live here — you pass the path as an argument
+        ├── demo.config.json
+        └── index.html / etc.
+```
+
+---
+
 ## Setup
 
 ### 1. Install dependencies
 
-```bash
+Run this once from inside the automation repo:
+
+```powershell
+cd C:\Users\abdul\brandlifters-material\brandlifters-automation
 npm install
-```
-
-Install Playwright's Chromium browser:
-
-```bash
 npx playwright install chromium
 ```
 
 ### 2. Configure environment variables
 
-```bash
-cp .env.example .env
+```powershell
+copy .env.example .env
 ```
 
-Fill in all values in `.env`. Required variables:
+Fill in all values in `.env`:
 
 | Variable | Where to get it |
 |---|---|
-| `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens (needs `repo` scope) |
-| `GITHUB_OWNER` | Your GitHub username or org |
+| `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens (classic) — needs `repo` and `delete_repo` scopes |
+| `GITHUB_OWNER` | `brandlifters` |
 | `VERCEL_TOKEN` | Vercel dashboard → Settings → Tokens |
-| `VERCEL_TEAM_ID` | Vercel dashboard → Team settings (leave blank for personal accounts) |
+| `VERCEL_TEAM_ID` | Leave blank (personal account) |
 | `FRAMER_API_KEY` | Framer project → Settings → Server API |
 | `FRAMER_COLLECTION_ID` | Framer CMS → your portfolio collection → collection ID in the URL |
-| `WEBHOOK_SECRET` | Any random string — you set this in both `.env` AND in the Vercel webhook config |
-
-### 3. Build (for production)
-
-```bash
-npm run build
-```
+| `WEBHOOK_SECRET` | Any random string — set the same value in Vercel dashboard when creating the webhook |
 
 ---
 
-## Part 1 — Running the publish command
+## Running the publish command
 
-From inside a demo website directory that contains `demo.config.json`:
+### Always run from the automation repo
 
-```bash
-npm run publish-demo
+```powershell
+cd C:\Users\abdul\brandlifters-material\brandlifters-automation
 ```
 
-Or point to a specific demo directory:
+> **Important:** Use `npx ts-node` directly — **not** `npm run publish-demo --`.
+> npm intercepts flags like `--path` and `--github-only` before they reach the script, silently dropping them.
 
-```bash
-npm run publish-demo -- --path /path/to/demo-dental-clinic
+### Publish GitHub only (use this first — when Vercel token is not yet set)
+
+```powershell
+npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo" --github-only
 ```
 
 This will:
-1. Validate `demo.config.json`
-2. Create the GitHub repo (if it doesn't exist)
-3. Push all code to GitHub
-4. Create the Vercel project linked to GitHub (if it doesn't exist)
+1. Read and validate `demo.config.json` from the demo folder
+2. Create the GitHub repo (e.g. `github.com/brandlifters/demo-barber-shop`)
+3. Set the git identity (`brandlifters / brandliftersseo@gmail.com`) on the demo repo
+4. Set the SSH remote (`git@github-brandlifters:brandlifters/demo-barber-shop.git`)
+5. Commit and push the code
 
-After this, Vercel auto-deploys from the GitHub push. The webhook server handles everything else.
+### Full publish (GitHub + Vercel — use once VERCEL_TOKEN is in .env)
 
----
-
-## Part 2 — Deploying the webhook server
-
-The webhook server must be publicly accessible so Vercel can POST to it.
-
-### Run locally (for testing with a tunnel)
-
-```bash
-npm run dev
+```powershell
+npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
 ```
 
-Then use [ngrok](https://ngrok.com/) or similar to expose it:
+This does everything above plus:
+- Creates the Vercel project linked to the GitHub repo
+- Vercel auto-deploys from the push
+- The webhook server handles the rest (screenshot → Framer)
 
-```bash
-ngrok http 3000
+### Swapping in a different demo
+
+Just change the `--path` to point at a different demo folder. Each demo folder needs its own `demo.config.json`.
+
+```powershell
+npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\dental-demo" --github-only
 ```
-
-Copy the `https://` ngrok URL for the next step.
-
-### Deploy to production
-
-Recommended platforms: **Railway**, **Render**, or **Fly.io** (all have free tiers).
-
-Set the same environment variables from your `.env` file in the platform's dashboard.
-
-### Configure the Vercel webhook
-
-1. Go to: Vercel dashboard → your team/account → Settings → Webhooks
-2. Click **Add Webhook**
-3. Set the URL to: `https://your-server.com/api/vercel-webhook`
-4. Set the **Secret** to the same value as `WEBHOOK_SECRET` in your `.env`
-5. Select the **deployment.succeeded** event (and optionally `deployment.error`)
-6. Save
 
 ---
 
 ## demo.config.json
 
-Every demo website repo must include this file in its root directory.
+Every demo folder must contain this file. The automation reads it — nothing is guessed.
 
 ```json
 {
-  "name": "dental-clinic-demo",
-  "industry": "Dental Clinic",
-  "title": "SmileBright Dental",
-  "description": "A modern, conversion-focused website for a dental clinic.",
-  "tags": ["healthcare", "dental", "local-business"],
-  "primaryColor": "#2A9D8F",
-  "repoName": "demo-dental-clinic",
-  "vercelProjectName": "demo-dental-clinic",
-  "localPath": "../demos/dental-clinic",
+  "name": "barber-demo",
+  "industry": "Barber Shop",
+  "title": "Northline Barbers",
+  "description": "A premium barber shop demo website.",
+  "tags": ["barber", "local"],
+  "primaryColor": "#111111",
+  "repoName": "demo-barber-shop",
+  "vercelProjectName": "demo-barber-shop",
+  "localPath": "C:/Users/abdul/brandlifters-material/brandlifters-demo/barber-demo",
   "previewUrl": ""
 }
 ```
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | ✔ | Unique kebab-case identifier |
-| `industry` | ✔ | Human-readable industry label |
+| `name` | ✔ | Unique kebab-case identifier for this demo |
+| `industry` | ✔ | Human-readable industry label shown on the portfolio card |
 | `title` | ✔ | Fake business name |
-| `description` | ✔ | Portfolio card description |
+| `description` | ✔ | Short description for the portfolio card |
 | `tags` | – | Optional array of tags |
-| `primaryColor` | – | Brand hex colour for thumbnail overlays |
-| `repoName` | ✔ | GitHub repo name (lowercase, hyphens only) |
-| `vercelProjectName` | ✔ | Vercel project name (lowercase, hyphens only) |
-| `localPath` | ✔ | Path to the demo code (used by publish-demo) |
-| `previewUrl` | ✔ | Leave empty — automation fills this after deployment |
+| `primaryColor` | – | Brand hex colour |
+| `repoName` | ✔ | GitHub repo name — lowercase, hyphens only |
+| `vercelProjectName` | ✔ | Vercel project name — lowercase, hyphens only |
+| `localPath` | ✔ | **Absolute path** to the demo folder on your machine |
+| `previewUrl` | ✔ | Leave as empty string — automation fills it after deployment |
+
+---
+
+## Git identity (how BrandLifters repos are targeted)
+
+Any repo under `brandlifters-material` is automatically configured to use the BrandLifters GitHub account. The automation sets these on every push — you never have to do it manually:
+
+```
+git config user.name   "brandlifters"
+git config user.email  "brandliftersseo@gmail.com"
+git remote origin      git@github-brandlifters:brandlifters/<repo>.git
+```
+
+These are **local** settings — only apply inside each demo repo's `.git/config`. Your global git identity is untouched.
+
+To manually apply this to any existing repo under `brandlifters-material`:
+
+```powershell
+cd C:\Users\abdul\brandlifters-material\brandlifters-automation
+npx ts-node src/scripts/configure-repo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
+```
+
+Full explanation: [docs/git-account-targeting.md](docs/git-account-targeting.md)
+
+---
+
+## Webhook server (Part 2 — after Vercel is set up)
+
+The webhook server receives Vercel deployment events and runs the screenshot → Framer pipeline.
+
+### Run locally for testing
+
+```powershell
+cd C:\Users\abdul\brandlifters-material\brandlifters-automation
+npm run dev
+```
+
+Expose it publicly with ngrok so Vercel can reach it:
+
+```powershell
+ngrok http 3000
+```
+
+### Deploy to production
+
+Recommended: **Railway**, **Render**, or **Fly.io** (free tiers available). Set the same env vars from your `.env` in the platform dashboard.
+
+### Configure the Vercel webhook
+
+1. Vercel dashboard → Settings → Webhooks → **Add Webhook**
+2. URL: `https://your-server.com/api/vercel-webhook`
+3. Secret: same value as `WEBHOOK_SECRET` in `.env`
+4. Event: `deployment.succeeded`
+5. Save
 
 ---
 
@@ -164,32 +215,33 @@ Every demo website repo must include this file in its root directory.
 ```
 brandlifters-automation/
 ├── src/
-│   ├── types/
-│   │   └── index.ts              # Shared TypeScript types
-│   ├── config/
-│   │   └── env.ts                # Env var loading + validation
+│   ├── types/index.ts                # Shared TypeScript types
+│   ├── config/env.ts                 # Env var loading + validation (zod)
 │   ├── utils/
-│   │   ├── logger.ts             # Winston logger
-│   │   └── config-loader.ts      # demo.config.json reader
+│   │   ├── logger.ts                 # Winston logger (console + file)
+│   │   ├── config-loader.ts          # Reads + validates demo.config.json
+│   │   └── git-identity.ts           # BrandLifters git account targeting
 │   ├── services/
-│   │   ├── github.ts             # GitHub API (create repo, push)
-│   │   ├── vercel.ts             # Vercel API (create project, deploy)
-│   │   ├── framer.ts             # Framer CMS API (create item, publish)
-│   │   ├── screenshot.ts         # Playwright screenshot capture
-│   │   └── thumbnail.ts          # Sharp thumbnail generator
+│   │   ├── github.ts                 # GitHub API — create repo, push via SSH
+│   │   ├── vercel.ts                 # Vercel API — create project, deploy
+│   │   ├── framer.ts                 # Framer CMS — create item, publish
+│   │   ├── screenshot.ts             # Playwright screenshot capture
+│   │   └── thumbnail.ts              # Sharp thumbnail generator
 │   ├── scripts/
-│   │   └── publish-demo.ts       # CLI entry point
+│   │   ├── publish-demo.ts           # CLI: npm run publish-demo
+│   │   └── configure-repo.ts         # CLI: npm run configure-repo
 │   └── api/
-│       ├── server.ts             # Express webhook server
-│       └── routes/
-│           └── vercel-webhook.ts # Webhook handler
-├── output/                       # Generated files (gitignored)
+│       ├── server.ts                 # Express webhook server
+│       └── routes/vercel-webhook.ts  # Webhook handler + post-deploy pipeline
+├── docs/
+│   └── git-account-targeting.md      # How BrandLifters git targeting works
+├── output/                           # Generated files (gitignored)
 │   ├── screenshots/
 │   ├── thumbnails/
 │   ├── snapshots/
 │   └── logs/
-├── .env.example
-├── .gitignore
+├── .env                              # Your secrets (never commit this)
+├── .env.example                      # Template — copy to .env
 ├── demo.config.example.json
 ├── package.json
 ├── tsconfig.json
@@ -200,23 +252,27 @@ brandlifters-automation/
 
 ## Testing each step independently
 
-**Step 1 — Validate config only:**
-Run `publish-demo` against a demo with `demo.config.json`. Check the logged output.
+**Token valid?**
+```powershell
+cd C:\Users\abdul\brandlifters-material\brandlifters-automation
+node -e "require('dotenv').config(); fetch('https://api.github.com/user', { headers: { Authorization: 'Bearer ' + process.env.GITHUB_TOKEN, 'User-Agent': 'test' } }).then(r => r.json()).then(d => console.log(d.login))"
+```
 
-**Step 2 — Test GitHub push:**
-After `publish-demo` completes, verify the repo at `github.com/<your-username>/<repoName>`.
+**GitHub only (no Vercel needed):**
+```powershell
+npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo" --github-only
+```
 
-**Step 3 — Test Vercel project:**
-Check the Vercel dashboard for a project named `vercelProjectName`.
+**Full pipeline:**
+```powershell
+npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
+```
 
-**Step 4 — Test the webhook locally:**
-Start the dev server (`npm run dev`) and expose it with ngrok. Trigger a manual Vercel deployment and watch the server logs.
-
-**Step 5 — Test screenshot:**
-The screenshot is saved to `./output/screenshots/<site-name>.png` after every webhook trigger.
-
-**Step 6 — Test Framer:**
-Check your Framer CMS collection for the new item after a successful webhook run.
+**Webhook server running:**
+```powershell
+npm run dev
+# then visit http://localhost:3000/health
+```
 
 ---
 

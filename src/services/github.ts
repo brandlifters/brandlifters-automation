@@ -24,11 +24,24 @@ function getOctokit(): Octokit {
   return new Octokit({ auth: env.GITHUB_TOKEN });
 }
 
+/**
+ * Returns the login of the authenticated GitHub user.
+ * Used to decide whether repo creation should target a personal account or an org.
+ */
+async function getAuthenticatedLogin(octokit: Octokit): Promise<string> {
+  const { data } = await octokit.users.getAuthenticated();
+  return data.login;
+}
+
 // ─── Repo Management ───────────────────────────────────────────────────────────
 
 /**
  * Creates the GitHub repo if it doesn't already exist.
  * Always returns the repo metadata — safe to call multiple times.
+ *
+ * Handles both cases automatically:
+ *   - GITHUB_OWNER is the authenticated user → createForAuthenticatedUser
+ *   - GITHUB_OWNER is an org the token has access to → createInOrg
  */
 export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoResult> {
   const octokit = getOctokit();
@@ -58,12 +71,36 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
   }
 
   logger.info(`[GitHub] Creating new repo: ${repoName}`);
-  const { data } = await octokit.repos.createForAuthenticatedUser({
+
+  // Determine whether GITHUB_OWNER is the token owner or a separate org.
+  // createForAuthenticatedUser only works when the owner matches the token identity.
+  // createInOrg is required when pushing to an org (even if you're a member).
+  const authenticatedLogin = await getAuthenticatedLogin(octokit);
+  const isPersonalAccount =
+    authenticatedLogin.toLowerCase() === env.GITHUB_OWNER.toLowerCase();
+
+  logger.info(
+    `[GitHub] Token owner: ${authenticatedLogin} | Target owner: ${env.GITHUB_OWNER} | ` +
+      `Using: ${isPersonalAccount ? 'createForAuthenticatedUser' : 'createInOrg'}`
+  );
+
+  const repoPayload = {
     name: repoName,
     description: `BrandLifters demo — ${config.industry}: ${config.title}`,
     private: false,
     auto_init: false, // We push our own initial commit
-  });
+  };
+
+  let data: { name: string; html_url: string; clone_url: string };
+
+  if (isPersonalAccount) {
+    ({ data } = await octokit.repos.createForAuthenticatedUser(repoPayload));
+  } else {
+    ({ data } = await octokit.repos.createInOrg({
+      org: env.GITHUB_OWNER,
+      ...repoPayload,
+    }));
+  }
 
   logger.info(`[GitHub] Repo created: ${data.html_url}`);
   return {
