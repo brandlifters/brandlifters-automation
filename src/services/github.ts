@@ -2,11 +2,14 @@
  * GitHub Service
  *
  * Handles:
- *   - Creating a public GitHub repo for a demo site (if it doesn't exist)
+ *   - Creating a public GitHub repo via the Octokit REST API
  *   - Initialising git in the local demo directory
- *   - Committing and pushing the demo code to GitHub
+ *   - Committing and pushing via SSH using the BrandLifters account alias
  *
- * Uses @octokit/rest for API calls and child_process for git commands.
+ * AUTH SPLIT (important):
+ *   - Octokit API calls  → GITHUB_TOKEN (REST API authentication)
+ *   - git push           → SSH alias    (configured by git-identity.ts)
+ *   These are intentionally separate. The token is never embedded in a remote URL.
  */
 
 import { Octokit } from '@octokit/rest';
@@ -14,11 +17,14 @@ import { execSync } from 'child_process';
 import path from 'path';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
+import { configureGitIdentity } from '../utils/git-identity';
 import { DemoConfig, GitHubRepoResult } from '../types';
 
 function getOctokit(): Octokit {
   return new Octokit({ auth: env.GITHUB_TOKEN });
 }
+
+// ─── Repo Management ───────────────────────────────────────────────────────────
 
 /**
  * Creates the GitHub repo if it doesn't already exist.
@@ -56,7 +62,7 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
     name: repoName,
     description: `BrandLifters demo — ${config.industry}: ${config.title}`,
     private: false,
-    auto_init: false, // We will push our own initial commit
+    auto_init: false, // We push our own initial commit
   });
 
   logger.info(`[GitHub] Repo created: ${data.html_url}`);
@@ -68,13 +74,20 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
   };
 }
 
+// ─── Push ──────────────────────────────────────────────────────────────────────
+
 /**
- * Pushes the local demo directory to the GitHub repo.
+ * Pushes the local demo directory to GitHub using SSH.
  *
- * - Initialises git if not already initialised
- * - Stages all files
- * - Creates a commit (or amends if already initialised)
- * - Force-pushes to main (demo sites are not collaborative — force push is safe)
+ * Order of operations matters:
+ *   1. git init  — ensures .git exists before any config is written
+ *   2. configureGitIdentity — sets user.name/email AND the SSH remote URL
+ *                             (must happen before the commit so authorship is correct)
+ *   3. git add + commit
+ *   4. git push via the SSH alias (no token in URL)
+ *
+ * Force-push is used intentionally: demo sites are non-collaborative and
+ * re-running publish-demo should always reflect the current local state.
  */
 export async function pushToGitHub(
   config: DemoConfig,
@@ -82,18 +95,23 @@ export async function pushToGitHub(
 ): Promise<void> {
   const localPath = path.resolve(config.localPath);
 
-  logger.info(`[GitHub] Pushing ${localPath} → ${repoResult.cloneUrl}`);
+  logger.info(`[GitHub] Preparing push for: ${repoResult.repoName}`);
 
-  // Build the authenticated remote URL so git push works without prompts
-  const remoteUrl = buildAuthenticatedRemoteUrl(repoResult.cloneUrl);
-
+  // ── Step 1: Ensure .git directory exists ──────────────────────────────────
   runGit(localPath, 'init -b main');
+
+  // ── Step 2: Apply BrandLifters git identity ────────────────────────────────
+  // This sets user.name, user.email, and the SSH origin remote — all in one call.
+  // Must run BEFORE `git commit` so the commit carries the right author identity.
+  const identity = configureGitIdentity(localPath, repoResult.repoName);
+  logger.info(`[GitHub] Remote: ${identity.remoteUrl}`);
+
+  // ── Step 3: Stage and commit ───────────────────────────────────────────────
   runGit(localPath, 'add -A');
 
-  // Git requires at least one commit to push — check if HEAD exists
   const hasCommits = hasExistingCommits(localPath);
   if (hasCommits) {
-    // Overwrite last commit so re-runs don't pile up pointless history
+    // Amend — re-runs should not accumulate meaningless history on demo repos
     runGit(
       localPath,
       `commit --allow-empty --amend -m "chore: update demo site [${config.industry}]"`
@@ -102,27 +120,15 @@ export async function pushToGitHub(
     runGit(localPath, `commit -m "feat: initial demo site [${config.industry}]"`);
   }
 
-  // Set/update the remote
-  const remoteExists = gitRemoteExists(localPath, 'origin');
-  if (remoteExists) {
-    runGit(localPath, `remote set-url origin ${remoteUrl}`);
-  } else {
-    runGit(localPath, `remote add origin ${remoteUrl}`);
-  }
-
-  // Force push — safe for demo sites, no collaborative branch protection needed
+  // ── Step 4: Push via SSH ───────────────────────────────────────────────────
+  // The remote URL was already set to git@github-brandlifters:... by configureGitIdentity.
+  // SSH resolves the alias → correct key → correct account. No token needed here.
   runGit(localPath, 'push -u origin main --force');
 
-  logger.info(`[GitHub] Push complete`);
+  logger.info(`[GitHub] Push complete → ${identity.remoteUrl}`);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function buildAuthenticatedRemoteUrl(cloneUrl: string): string {
-  // Convert https://github.com/owner/repo.git
-  //      → https://<token>@github.com/owner/repo.git
-  return cloneUrl.replace('https://', `https://${env.GITHUB_TOKEN}@`);
-}
 
 function runGit(cwd: string, args: string): void {
   const cmd = `git ${args}`;
@@ -133,15 +139,6 @@ function runGit(cwd: string, args: string): void {
 function hasExistingCommits(cwd: string): boolean {
   try {
     execSync('git rev-parse HEAD', { cwd, stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function gitRemoteExists(cwd: string, name: string): boolean {
-  try {
-    execSync(`git remote get-url ${name}`, { cwd, stdio: 'pipe' });
     return true;
   } catch {
     return false;

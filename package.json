@@ -8,6 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/api/server.ts",
     "start": "node dist/api/server.js",
     "publish-demo": "ts-node src/scripts/publish-demo.ts",
+    "configure-repo": "ts-node src/scripts/configure-repo.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
   },

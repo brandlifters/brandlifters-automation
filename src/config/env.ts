@@ -13,8 +13,9 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const EnvSchema = z.object({
-  // GitHub
+  // GitHub API (token used for Octokit REST calls — repo creation, metadata)
   GITHUB_TOKEN: z.string().min(1, 'GITHUB_TOKEN is required'),
+  // The GitHub org/username that owns the repos (used in Octokit API calls)
   GITHUB_OWNER: z.string().min(1, 'GITHUB_OWNER is required'),
 
   // Vercel
@@ -32,6 +33,24 @@ const EnvSchema = z.object({
   // Output directories
   SCREENSHOT_OUTPUT_DIR: z.string().default('./output/screenshots'),
   THUMBNAIL_OUTPUT_DIR: z.string().default('./output/thumbnails'),
+
+  // ─── BrandLifters Git Account Targeting ──────────────────────────────────────
+  // Absolute path to the parent folder that scopes BrandLifters repos.
+  // Any git repo found under this path is treated as a BrandLifters repo.
+  BRANDLIFTERS_PARENT_DIR: z
+    .string()
+    .default('C:/Users/abdul/brandlifters-material'),
+
+  // The SSH host alias configured in ~/.ssh/config for the BrandLifters account.
+  // Remote URLs will be: git@<SSH_ALIAS>:<ORG>/<repo>.git
+  BRANDLIFTERS_SSH_ALIAS: z.string().default('github-brandlifters'),
+
+  // GitHub org/username used in the SSH remote path (right side of the colon).
+  BRANDLIFTERS_GITHUB_ORG: z.string().default('brandlifters'),
+
+  // Git commit identity applied locally to every BrandLifters repo.
+  BRANDLIFTERS_GIT_NAME: z.string().default('brandlifters'),
+  BRANDLIFTERS_GIT_EMAIL: z.string().default('brandliftersseo@gmail.com'),
 });
 
 function loadEnv() {
