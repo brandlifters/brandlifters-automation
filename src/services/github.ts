@@ -165,6 +165,28 @@ export async function pushToGitHub(
   logger.info(`[GitHub] Push complete → ${identity.remoteUrl}`);
 }
 
+// ─── Deploy Trigger ────────────────────────────────────────────────────────────
+
+/**
+ * Pushes an empty commit to trigger a Vercel deployment.
+ *
+ * Vercel creates a project linked to GitHub but only deploys on a push event.
+ * After `ensureVercelProject` succeeds, call this to fire that first push.
+ */
+export function triggerDeployCommit(config: DemoConfig): void {
+  const localPath = path.resolve(config.localPath);
+
+  logger.info(`[GitHub] Pushing empty commit to trigger Vercel deployment...`);
+
+  runGit(
+    localPath,
+    `commit --allow-empty -m "chore: trigger vercel deploy [${config.industry}]"`
+  );
+  runGit(localPath, 'push origin main');
+
+  logger.info(`[GitHub] Trigger commit pushed`);
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function runGit(cwd: string, args: string): void {

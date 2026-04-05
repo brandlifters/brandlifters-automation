@@ -8,14 +8,20 @@
  *   2. Ensure the GitHub repo exists (create if not)
  *   3. Push the local demo code to GitHub
  *   4. Ensure the Vercel project exists and is linked to the GitHub repo
- *   5. Log success — Vercel auto-deploys from GitHub push.
- *      Webhook handles the rest (screenshot → Framer) asynchronously.
+ *   5. Trigger a deployment (empty commit) and wait for the site to go live
+ *   6. Capture a screenshot and generate a thumbnail
+ *   7. Create a Framer CMS item and publish the portfolio
+ *
+ * Use --github-only to stop after step 3 (useful when Vercel isn't configured yet).
  */
 
 import path from 'path';
 import { loadDemoConfig } from '../utils/config-loader';
-import { ensureGitHubRepo, pushToGitHub } from '../services/github';
-import { ensureVercelProject } from '../services/vercel';
+import { ensureGitHubRepo, pushToGitHub, triggerDeployCommit } from '../services/github';
+import { ensureVercelProject, waitForDeployment } from '../services/vercel';
+import { captureScreenshot } from '../services/screenshot';
+import { generateThumbnail } from '../services/thumbnail';
+import { createFramerCMSItem, uploadThumbnailToFramer, publishFramerSite } from '../services/framer';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
 import { PublishPipelineState } from '../types';
@@ -91,7 +97,7 @@ async function main() {
     logger.info(`Repo: ${state.config.repoName}`);
 
     // ── Step 2: GitHub repo ────────────────────────────────────────────────────
-    const totalSteps = githubOnly ? 3 : 4;
+    const totalSteps = githubOnly ? 3 : 7;
     logger.info(`\n[Step 2/${totalSteps}] Ensuring GitHub repo...`);
     state.github = await ensureGitHubRepo(state.config);
 
@@ -99,13 +105,49 @@ async function main() {
     logger.info(`\n[Step 3/${totalSteps}] Pushing code to GitHub...`);
     await pushToGitHub(state.config, state.github);
 
-    // ── Step 4: Vercel project (skipped when --github-only) ────────────────────
-    if (!githubOnly) {
-      logger.info(`\n[Step 4/${totalSteps}] Ensuring Vercel project...`);
-      state.vercel = await ensureVercelProject(state.config, env.GITHUB_OWNER);
+    if (githubOnly) {
+      printSuccess(state, githubOnly);
+      return;
     }
 
+    // ── Step 4: Vercel project ─────────────────────────────────────────────────
+    logger.info(`\n[Step 4/${totalSteps}] Ensuring Vercel project...`);
+    state.vercel = await ensureVercelProject(state.config, env.GITHUB_OWNER);
+
+    // ── Step 5: Trigger deployment + wait for live URL ─────────────────────────
+    logger.info(`\n[Step 5/${totalSteps}] Triggering deployment and waiting for site to go live...`);
+    const triggerTime = Date.now();
+    triggerDeployCommit(state.config);
+    state.deploymentUrl = await waitForDeployment(
+      state.vercel.projectId,
+      state.config.vercelProjectName,
+      triggerTime
+    );
+
+    // ── Step 6: Screenshot + thumbnail ────────────────────────────────────────
+    logger.info(`\n[Step 6/${totalSteps}] Capturing screenshot and generating thumbnail...`);
+    const screenshotPath = await captureScreenshot(state.deploymentUrl, state.config.name);
+    const thumbnailPath = await generateThumbnail(screenshotPath, state.config.name);
+
+    // ── Step 7: Framer CMS ────────────────────────────────────────────────────
+    logger.info(`\n[Step 7/${totalSteps}] Uploading to Framer CMS and publishing...`);
+    state.thumbnailUrl = await uploadThumbnailToFramer(thumbnailPath);
+
+    const framerResult = await createFramerCMSItem({
+      title: state.config.title,
+      industry: state.config.industry,
+      description: state.config.description,
+      tags: (state.config.tags ?? []).join(', '),
+      liveUrl: state.deploymentUrl,
+      thumbnailUrl: state.thumbnailUrl,
+      slug: state.config.name,
+    });
+    state.framerItemId = framerResult.itemId;
+
+    await publishFramerSite();
+
     // ── Done ───────────────────────────────────────────────────────────────────
+    state.completedAt = new Date().toISOString();
     printSuccess(state, githubOnly);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -126,7 +168,7 @@ async function main() {
 // ─── Output Helpers ─────────────────────────────────────────────────────────────
 
 function printSuccess(state: PublishPipelineState, githubOnly: boolean): void {
-  const { config, github, vercel } = state;
+  const { config, github, vercel, deploymentUrl, thumbnailUrl } = state;
 
   logger.info('\n═══════════════════════════════════════════════');
   logger.info('  ✔ Publish complete!');
@@ -140,14 +182,11 @@ function printSuccess(state: PublishPipelineState, githubOnly: boolean): void {
     logger.info('  Stopped after GitHub push (--github-only).');
     logger.info('  Next: add VERCEL_TOKEN to .env and re-run without --github-only');
   } else {
-    logger.info(`  Vercel:   Project "${vercel?.projectName}" ready`);
+    logger.info(`  Vercel:   ${vercel?.projectName}`);
+    logger.info(`  Live URL: ${deploymentUrl}`);
+    logger.info(`  Thumbnail: ${thumbnailUrl}`);
     logger.info('');
-    logger.info('  Vercel is now deploying from GitHub.');
-    logger.info('  Once deployment succeeds, the webhook will:');
-    logger.info('    → capture a screenshot');
-    logger.info('    → generate a thumbnail');
-    logger.info('    → create a Framer CMS item');
-    logger.info('    → publish your portfolio');
+    logger.info('  Portfolio updated — your demo is now live on Framer.');
   }
 
   logger.info('═══════════════════════════════════════════════\n');

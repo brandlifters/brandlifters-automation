@@ -128,7 +128,9 @@ export interface PublishPipelineState {
   config: DemoConfig;
   github?: GitHubRepoResult;
   vercel?: VercelProjectResult;
+  deploymentUrl?: string;
   screenshot?: ScreenshotResult;
+  thumbnailUrl?: string;
   framerItemId?: string;
   completedAt?: string;
   errors: string[];

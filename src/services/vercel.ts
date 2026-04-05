@@ -64,14 +64,23 @@ export async function ensureVercelProject(
 
   logger.info(`[Vercel] Creating project: ${vercelProjectName}`);
 
-  const { data } = await client.post('/v10/projects', {
-    name: vercelProjectName,
-    framework: 'other', // Generic — demo sites may use plain HTML, Astro, etc.
-    gitRepository: {
-      type: 'github',
-      repo: `${githubOwner}/${repoName}`,
-    },
-  });
+  let data: { id: string; name: string };
+  try {
+    ({ data } = await client.post('/v10/projects', {
+      name: vercelProjectName,
+      framework: null, // null = no framework (plain HTML)
+      gitRepository: {
+        type: 'github',
+        repo: `${githubOwner}/${repoName}`,
+      },
+    }));
+  } catch (err: unknown) {
+    const axiosErr = err as { response?: { data?: unknown; status?: number } };
+    if (axiosErr.response) {
+      logger.error(`[Vercel] API error ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`);
+    }
+    throw err;
+  }
 
   logger.info(`[Vercel] Project created: ${data.id}`);
   return {
@@ -146,6 +155,85 @@ export async function pollDeploymentUntilReady(
   }
 
   throw new Error(`Deployment ${deploymentId} did not complete within ${maxWaitMs / 1000}s`);
+}
+
+/**
+ * Waits for the most recent Vercel deployment (triggered after `since`) to
+ * reach a terminal state, then returns its live URL.
+ *
+ * Call this immediately after `triggerDeployCommit` — pass `Date.now()` captured
+ * just before the commit push so we don't accidentally pick up a stale deployment.
+ *
+ * @param projectId   Vercel project ID (from ensureVercelProject)
+ * @param projectName Used in log messages only
+ * @param since       Unix ms timestamp — only look for deployments created after this
+ * @param maxWaitMs   Maximum total wait time (default: 10 minutes)
+ * @returns           Live deployment URL (https://...)
+ */
+export async function waitForDeployment(
+  projectId: string,
+  projectName: string,
+  since: number,
+  maxWaitMs = 10 * 60 * 1000
+): Promise<string> {
+  const client = getVercelClient();
+  const pollInterval = 10_000;
+  const start = Date.now();
+
+  logger.info(`[Vercel] Waiting for deployment of: ${projectName}`);
+
+  // Phase 1: Find the deployment ID — Vercel queues it asynchronously after the push
+  let deploymentId: string | null = null;
+
+  while (Date.now() - start < maxWaitMs) {
+    const { data } = await client.get('/v6/deployments', {
+      params: {
+        projectId,
+        limit: 5,
+        since: since - 10_000, // 10s grace period for clock skew
+      },
+    });
+
+    if (data.deployments?.length > 0) {
+      const latest = data.deployments[0];
+      deploymentId = latest.uid;
+      logger.info(`[Vercel] Deployment found: ${deploymentId} (state: ${latest.readyState})`);
+      break;
+    }
+
+    logger.info('[Vercel] Deployment not yet queued — retrying in 10s...');
+    await sleep(pollInterval);
+  }
+
+  if (!deploymentId) {
+    throw new Error(
+      `No deployment appeared for project "${projectName}" within ${maxWaitMs / 1000}s`
+    );
+  }
+
+  // Phase 2: Poll until READY (or fail fast on ERROR/CANCELED)
+  while (Date.now() - start < maxWaitMs) {
+    const { data } = await client.get(`/v13/deployments/${deploymentId}`);
+    const state: string = data.readyState;
+
+    logger.info(`[Vercel] Deployment state: ${state}`);
+
+    if (state === 'READY') {
+      const url = `https://${data.url}`;
+      logger.info(`[Vercel] Deployment ready → ${url}`);
+      return url;
+    }
+
+    if (state === 'ERROR' || state === 'CANCELED') {
+      throw new Error(`Deployment ${deploymentId} ended with state: ${state}`);
+    }
+
+    await sleep(pollInterval);
+  }
+
+  throw new Error(
+    `Deployment ${deploymentId} did not finish within ${maxWaitMs / 1000}s`
+  );
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
