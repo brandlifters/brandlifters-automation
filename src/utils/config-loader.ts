@@ -18,7 +18,10 @@ const DemoConfigSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
   tags: z.array(z.string()).optional(),
+  features: z.array(z.string()).optional(),
   primaryColor: z.string().optional(),
+  accentFrom: z.string().optional(),
+  accentTo: z.string().optional(),
   repoName: z.string().min(1).regex(/^[a-z0-9-]+$/, {
     message: 'repoName must be lowercase, alphanumeric with hyphens only',
   }),

@@ -1,55 +1,12 @@
 # BrandLifters Automation
 
-Automation pipeline for publishing BrandLifters demo websites to GitHub, Vercel, and Framer.
-
----
-
-## How the system works
-
-```
-You (manual)               Automation                    External Services
-─────────────              ──────────────────────────    ───────────────────
-1. Generate demo site  →   publish-demo CLI
-2. Review locally      →   (your approval)
-3. Run publish-demo    →   → Create GitHub repo
-                           → Push code
-                           → Create Vercel project        → GitHub
-                                                          → Vercel auto-deploys
-                           (Vercel sends webhook) ←       ← Vercel webhook
-                           → Capture screenshot            → Playwright
-                           → Generate thumbnail            → Sharp
-                           → Create Framer CMS item        → Framer API
-                           → Publish Framer site           → Framer API
-                                                  ↓
-                                        Live on your portfolio ✔
-```
-
----
-
-## Folder layout (important)
-
-All commands are **always run from the automation repo**, not from the demo folder.
-
-```
-brandlifters-material/
-├── brandlifters-automation/   ← YOU ARE ALWAYS IN HERE when running commands
-│   ├── src/
-│   ├── .env
-│   ├── package.json
-│   └── ...
-└── brandlifters-demo/
-    └── barber-demo/           ← demo sites live here — you pass the path as an argument
-        ├── demo.config.json
-        └── index.html / etc.
-```
+CLI pipeline for publishing BrandLifters demo websites — GitHub repo creation, Vercel deployment, screenshot capture, and website portfolio updates.
 
 ---
 
 ## Setup
 
 ### 1. Install dependencies
-
-Run this once from inside the automation repo:
 
 ```powershell
 cd C:\Users\abdul\brandlifters-material\brandlifters-automation
@@ -63,77 +20,64 @@ npx playwright install chromium
 copy .env.example .env
 ```
 
-Fill in all values in `.env`:
+Fill in these values:
 
-| Variable | Where to get it |
+| Variable | Description |
 |---|---|
-| `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens (classic) — needs `repo` and `delete_repo` scopes |
+| `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens → needs `repo` scope |
 | `GITHUB_OWNER` | `brandlifters` |
 | `VERCEL_TOKEN` | Vercel dashboard → Settings → Tokens |
 | `VERCEL_TEAM_ID` | Leave blank (personal account) |
-| `FRAMER_API_KEY` | Framer project → Settings → Server API |
-| `FRAMER_COLLECTION_ID` | Framer CMS → your portfolio collection → collection ID in the URL |
-| `WEBHOOK_SECRET` | Any random string — set the same value in Vercel dashboard when creating the webhook |
+| `WEBSITE_REPO_PATH` | Absolute path to `brandlifters-website` — defaults to the sibling folder |
+
+The remaining variables (`BRANDLIFTERS_*`) have correct defaults and don't need to be changed unless your folder layout is different.
+
+### 3. SSH setup
+
+All repos under `brandlifters-material/` push to GitHub using the `github-brandlifters` SSH alias.
+Your `~/.ssh/config` must include:
+
+```
+Host github-brandlifters
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_brandlifters
+```
+
+The key `id_brandlifters` must be added to the `brandlifters` GitHub account.
+See [docs/git-account-targeting.md](docs/git-account-targeting.md) for full setup.
 
 ---
 
-## Running the publish command
+## Commands
 
-### Always run from the automation repo
+See [COMMANDS.md](COMMANDS.md) for the full reference. Quick summary:
 
-```powershell
-cd C:\Users\abdul\brandlifters-material\brandlifters-automation
-```
-
-> **Important:** Use `npx ts-node` directly — **not** `npm run publish-demo --`.
-> npm intercepts flags like `--path` and `--github-only` before they reach the script, silently dropping them.
-
-### Publish GitHub only (use this first — when Vercel token is not yet set)
-
-```powershell
-npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo" --github-only
-```
-
-This will:
-1. Read and validate `demo.config.json` from the demo folder
-2. Create the GitHub repo (e.g. `github.com/brandlifters/demo-barber-shop`)
-3. Set the git identity (`brandlifters / brandliftersseo@gmail.com`) on the demo repo
-4. Set the SSH remote (`git@github-brandlifters:brandlifters/demo-barber-shop.git`)
-5. Commit and push the code
-
-### Full publish (GitHub + Vercel — use once VERCEL_TOKEN is in .env)
-
-```powershell
-npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
-```
-
-This does everything above plus:
-- Creates the Vercel project linked to the GitHub repo
-- Vercel auto-deploys from the push
-- The webhook server handles the rest (screenshot → Framer)
-
-### Swapping in a different demo
-
-Just change the `--path` to point at a different demo folder. Each demo folder needs its own `demo.config.json`.
-
-```powershell
-npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\dental-demo" --github-only
-```
+| Command | Use it when… |
+|---|---|
+| `npm run publish-demo -- --path "..."` | Deploying a brand-new demo for the first time |
+| `npm run update-demo -- --path "..."` | Pushing changes to an already-deployed demo |
+| `npm run push-website` | Pushing edits to the brandlifters website |
+| `npm run push-automation` | Pushing changes to this automation repo |
+| `npm run configure-repo -- --path "..."` | Fixing git identity on any repo |
 
 ---
 
 ## demo.config.json
 
-Every demo folder must contain this file. The automation reads it — nothing is guessed.
+Every demo folder must contain this file. Example:
 
 ```json
 {
   "name": "barber-demo",
-  "industry": "Barber Shop",
+  "industry": "Beauty",
   "title": "Northline Barbers",
   "description": "A premium barber shop demo website.",
-  "tags": ["barber", "local"],
+  "features": ["Per-barber booking", "Service & pricing menu", "Hours & directions"],
+  "tags": ["barber", "local business"],
   "primaryColor": "#111111",
+  "accentFrom": "#115e5b",
+  "accentTo": "#0fb5b1",
   "repoName": "demo-barber-shop",
   "vercelProjectName": "demo-barber-shop",
   "localPath": "C:/Users/abdul/brandlifters-material/brandlifters-demo/barber-demo",
@@ -141,144 +85,43 @@ Every demo folder must contain this file. The automation reads it — nothing is
 }
 ```
 
-| Field | Required | Description |
-|---|---|---|
-| `name` | ✔ | Unique kebab-case identifier for this demo |
-| `industry` | ✔ | Human-readable industry label shown on the portfolio card |
-| `title` | ✔ | Fake business name |
-| `description` | ✔ | Short description for the portfolio card |
-| `tags` | – | Optional array of tags |
-| `primaryColor` | – | Brand hex colour |
-| `repoName` | ✔ | GitHub repo name — lowercase, hyphens only |
-| `vercelProjectName` | ✔ | Vercel project name — lowercase, hyphens only |
-| `localPath` | ✔ | **Absolute path** to the demo folder on your machine |
-| `previewUrl` | ✔ | Leave as empty string — automation fills it after deployment |
+See `demo.config.example.json` and `CODEBASE.md` for field descriptions.
 
 ---
 
-## Git identity (how BrandLifters repos are targeted)
-
-Any repo under `brandlifters-material` is automatically configured to use the BrandLifters GitHub account. The automation sets these on every push — you never have to do it manually:
+## Folder layout
 
 ```
-git config user.name   "brandlifters"
-git config user.email  "brandliftersseo@gmail.com"
-git remote origin      git@github-brandlifters:brandlifters/<repo>.git
-```
-
-These are **local** settings — only apply inside each demo repo's `.git/config`. Your global git identity is untouched.
-
-To manually apply this to any existing repo under `brandlifters-material`:
-
-```powershell
-cd C:\Users\abdul\brandlifters-material\brandlifters-automation
-npx ts-node src/scripts/configure-repo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
-```
-
-Full explanation: [docs/git-account-targeting.md](docs/git-account-targeting.md)
-
----
-
-## Webhook server (Part 2 — after Vercel is set up)
-
-The webhook server receives Vercel deployment events and runs the screenshot → Framer pipeline.
-
-### Run locally for testing
-
-```powershell
-cd C:\Users\abdul\brandlifters-material\brandlifters-automation
-npm run dev
-```
-
-Expose it publicly with ngrok so Vercel can reach it:
-
-```powershell
-ngrok http 3000
-```
-
-### Deploy to production
-
-Recommended: **Railway**, **Render**, or **Fly.io** (free tiers available). Set the same env vars from your `.env` in the platform dashboard.
-
-### Configure the Vercel webhook
-
-1. Vercel dashboard → Settings → Webhooks → **Add Webhook**
-2. URL: `https://your-server.com/api/vercel-webhook`
-3. Secret: same value as `WEBHOOK_SECRET` in `.env`
-4. Event: `deployment.succeeded`
-5. Save
-
----
-
-## Project structure
-
-```
-brandlifters-automation/
-├── src/
-│   ├── types/index.ts                # Shared TypeScript types
-│   ├── config/env.ts                 # Env var loading + validation (zod)
-│   ├── utils/
-│   │   ├── logger.ts                 # Winston logger (console + file)
-│   │   ├── config-loader.ts          # Reads + validates demo.config.json
-│   │   └── git-identity.ts           # BrandLifters git account targeting
-│   ├── services/
-│   │   ├── github.ts                 # GitHub API — create repo, push via SSH
-│   │   ├── vercel.ts                 # Vercel API — create project, deploy
-│   │   ├── framer.ts                 # Framer CMS — create item, publish
-│   │   ├── screenshot.ts             # Playwright screenshot capture
-│   │   └── thumbnail.ts              # Sharp thumbnail generator
-│   ├── scripts/
-│   │   ├── publish-demo.ts           # CLI: npm run publish-demo
-│   │   └── configure-repo.ts         # CLI: npm run configure-repo
-│   └── api/
-│       ├── server.ts                 # Express webhook server
-│       └── routes/vercel-webhook.ts  # Webhook handler + post-deploy pipeline
-├── docs/
-│   └── git-account-targeting.md      # How BrandLifters git targeting works
-├── output/                           # Generated files (gitignored)
-│   ├── screenshots/
-│   ├── thumbnails/
-│   ├── snapshots/
-│   └── logs/
-├── .env                              # Your secrets (never commit this)
-├── .env.example                      # Template — copy to .env
-├── demo.config.example.json
-├── package.json
-├── tsconfig.json
-└── README.md
+brandlifters-material/
+├── brandlifters-automation/    ← run all commands from here
+│   ├── src/
+│   ├── .env
+│   ├── COMMANDS.md
+│   ├── CODEBASE.md
+│   └── package.json
+├── brandlifters-website/       ← updated automatically by the pipeline
+│   └── src/lib/data/demos.json
+└── brandlifters-demo/
+    ├── barber-demo/
+    │   ├── demo.config.json
+    │   └── index.html / ...
+    └── restaurant-demo/
+        ├── demo.config.json
+        └── ...
 ```
 
 ---
 
-## Testing each step independently
+## Troubleshooting
 
-**Token valid?**
-```powershell
-cd C:\Users\abdul\brandlifters-material\brandlifters-automation
-node -e "require('dotenv').config(); fetch('https://api.github.com/user', { headers: { Authorization: 'Bearer ' + process.env.GITHUB_TOKEN, 'User-Agent': 'test' } }).then(r => r.json()).then(d => console.log(d.login))"
-```
+**`Permission denied (publickey)` on git push**
+The SSH alias `github-brandlifters` is missing or the key isn't added to GitHub. See `docs/git-account-targeting.md`.
 
-**GitHub only (no Vercel needed):**
-```powershell
-npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo" --github-only
-```
+**`demos.json not found`**
+Set `WEBSITE_REPO_PATH` in `.env` to the absolute path of `brandlifters-website`.
 
-**Full pipeline:**
-```powershell
-npx ts-node src/scripts/publish-demo.ts --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo"
-```
+**Vercel deployment stuck**
+The script retries for up to 10 minutes. If it times out, the project is already created — re-run `update-demo` (not `publish-demo`) to retry.
 
-**Webhook server running:**
-```powershell
-npm run dev
-# then visit http://localhost:3000/health
-```
-
----
-
-## Future phases (not built yet)
-
-- Automated social media posting after publish
-- Analytics tracking per demo site
-- Multiple design templates
-- Batch demo generation from an industry list
+**`demo.config.json not found`**
+`--path` must point to the folder that *contains* the file, not to the file itself.

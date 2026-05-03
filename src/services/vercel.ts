@@ -2,12 +2,9 @@
  * Vercel Service
  *
  * Handles:
- *   - Creating a Vercel project (if it doesn't exist)
- *   - Linking the Vercel project to the GitHub repo
- *   - Triggering a deployment
- *   - Polling for deployment success (used during manual publish flow)
- *
- * Uses the Vercel REST API v9 via axios.
+ *   - Creating a Vercel project linked to a GitHub repo
+ *   - Polling for deployment completion
+ *   - Returning the correct public production URL
  */
 
 import axios, { AxiosInstance } from 'axios';
@@ -27,7 +24,7 @@ function getVercelClient(): AxiosInstance {
       Authorization: `Bearer ${env.VERCEL_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    params, // Team ID automatically appended to every request when set
+    params,
   });
 }
 
@@ -46,7 +43,6 @@ export async function ensureVercelProject(
 
   logger.info(`[Vercel] Checking for project: ${vercelProjectName}`);
 
-  // Try fetching an existing project by name
   try {
     const { data } = await client.get(`/v9/projects/${vercelProjectName}`);
     logger.info(`[Vercel] Project already exists: ${data.id}`);
@@ -57,9 +53,7 @@ export async function ensureVercelProject(
       alreadyExisted: true,
     };
   } catch (err: unknown) {
-    if ((err as { response?: { status?: number } }).response?.status !== 404) {
-      throw err;
-    }
+    if ((err as { response?: { status?: number } }).response?.status !== 404) throw err;
   }
 
   logger.info(`[Vercel] Creating project: ${vercelProjectName}`);
@@ -68,7 +62,7 @@ export async function ensureVercelProject(
   try {
     ({ data } = await client.post('/v10/projects', {
       name: vercelProjectName,
-      framework: null, // null = no framework (plain HTML)
+      framework: null,
       gitRepository: {
         type: 'github',
         repo: `${githubOwner}/${repoName}`,
@@ -77,7 +71,9 @@ export async function ensureVercelProject(
   } catch (err: unknown) {
     const axiosErr = err as { response?: { data?: unknown; status?: number } };
     if (axiosErr.response) {
-      logger.error(`[Vercel] API error ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`);
+      logger.error(
+        `[Vercel] API error ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`
+      );
     }
     throw err;
   }
@@ -91,84 +87,21 @@ export async function ensureVercelProject(
   };
 }
 
-/**
- * Triggers a new deployment on the connected Vercel project by
- * pushing a GitHub deploy hook or using the Vercel Deployments API.
- *
- * Vercel auto-deploys from the GitHub integration on every push,
- * so this is only needed when the push doesn't automatically trigger one.
- */
-export async function triggerDeployment(
-  projectId: string,
-  repoName: string,
-  githubOwner: string
-): Promise<string> {
-  const client = getVercelClient();
-
-  logger.info(`[Vercel] Triggering deployment for project ${projectId}`);
-
-  const { data } = await client.post('/v13/deployments', {
-    name: repoName,
-    gitSource: {
-      type: 'github',
-      repoId: null, // Let Vercel resolve via project link
-      ref: 'main',
-      org: githubOwner,
-      repo: repoName,
-    },
-    projectId,
-  });
-
-  const deploymentUrl = `https://${data.url}`;
-  logger.info(`[Vercel] Deployment queued: ${deploymentUrl}`);
-  return deploymentUrl;
-}
+// ─── Deployment Polling ────────────────────────────────────────────────────────
 
 /**
- * Polls the Vercel API until the deployment reaches a terminal state.
- * Used for local validation after `publish-demo` to confirm success.
+ * Waits for the most recent deployment (after `since`) to reach READY,
+ * then returns the correct public production URL.
  *
- * @param deploymentId  The Vercel deployment ID (e.g. "dpl_xxxx")
- * @param maxWaitMs     Maximum time to wait (default 5 minutes)
- */
-export async function pollDeploymentUntilReady(
-  deploymentId: string,
-  maxWaitMs = 5 * 60 * 1000
-): Promise<'READY' | 'ERROR' | 'CANCELED'> {
-  const client = getVercelClient();
-  const intervalMs = 10_000; // Poll every 10 seconds
-  const start = Date.now();
-
-  logger.info(`[Vercel] Polling deployment ${deploymentId}...`);
-
-  while (Date.now() - start < maxWaitMs) {
-    const { data } = await client.get(`/v13/deployments/${deploymentId}`);
-    const state: string = data.readyState;
-
-    logger.info(`[Vercel] Deployment state: ${state}`);
-
-    if (state === 'READY' || state === 'ERROR' || state === 'CANCELED') {
-      return state as 'READY' | 'ERROR' | 'CANCELED';
-    }
-
-    await sleep(intervalMs);
-  }
-
-  throw new Error(`Deployment ${deploymentId} did not complete within ${maxWaitMs / 1000}s`);
-}
-
-/**
- * Waits for the most recent Vercel deployment (triggered after `since`) to
- * reach a terminal state, then returns its live URL.
- *
- * Call this immediately after `triggerDeployCommit` — pass `Date.now()` captured
- * just before the commit push so we don't accidentally pick up a stale deployment.
+ * URL resolution order:
+ *   1. Alias ending in `.vercel.app` from the deployment's alias list
+ *   2. The project's production domain from /v9/projects (most reliable)
+ *   3. Fallback: construct `https://<projectName>.vercel.app`
  *
  * @param projectId   Vercel project ID (from ensureVercelProject)
- * @param projectName Used in log messages only
- * @param since       Unix ms timestamp — only look for deployments created after this
- * @param maxWaitMs   Maximum total wait time (default: 10 minutes)
- * @returns           Live deployment URL (https://...)
+ * @param projectName Vercel project name (used for fallback URL + logs)
+ * @param since       Unix ms — only look for deployments created after this
+ * @param maxWaitMs   Maximum total wait (default: 10 minutes)
  */
 export async function waitForDeployment(
   projectId: string,
@@ -182,7 +115,7 @@ export async function waitForDeployment(
 
   logger.info(`[Vercel] Waiting for deployment of: ${projectName}`);
 
-  // Phase 1: Find the deployment ID — Vercel queues it asynchronously after the push
+  // Phase 1: Find the deployment that was triggered after `since`
   let deploymentId: string | null = null;
 
   while (Date.now() - start < maxWaitMs) {
@@ -190,15 +123,23 @@ export async function waitForDeployment(
       params: {
         projectId,
         limit: 5,
-        since: since - 10_000, // 10s grace period for clock skew
+        since: since - 15_000, // 15s grace for clock skew
       },
     });
 
     if (data.deployments?.length > 0) {
-      const latest = data.deployments[0];
-      deploymentId = latest.uid;
-      logger.info(`[Vercel] Deployment found: ${deploymentId} (state: ${latest.readyState})`);
-      break;
+      // Pick the newest deployment created at or after our trigger time
+      const candidates = (data.deployments as Array<{ uid: string; created: number; readyState: string }>)
+        .filter((d) => d.created >= since - 15_000)
+        .sort((a, b) => b.created - a.created);
+
+      if (candidates.length > 0) {
+        deploymentId = candidates[0].uid;
+        logger.info(
+          `[Vercel] Deployment found: ${deploymentId} (state: ${candidates[0].readyState})`
+        );
+        break;
+      }
     }
 
     logger.info('[Vercel] Deployment not yet queued — retrying in 10s...');
@@ -211,7 +152,7 @@ export async function waitForDeployment(
     );
   }
 
-  // Phase 2: Poll until READY (or fail fast on ERROR/CANCELED)
+  // Phase 2: Poll until READY
   while (Date.now() - start < maxWaitMs) {
     const { data } = await client.get(`/v13/deployments/${deploymentId}`);
     const state: string = data.readyState;
@@ -219,9 +160,7 @@ export async function waitForDeployment(
     logger.info(`[Vercel] Deployment state: ${state}`);
 
     if (state === 'READY') {
-      const url = `https://${data.url}`;
-      logger.info(`[Vercel] Deployment ready → ${url}`);
-      return url;
+      return resolveProductionUrl(client, projectId, projectName, data);
     }
 
     if (state === 'ERROR' || state === 'CANCELED') {
@@ -234,6 +173,58 @@ export async function waitForDeployment(
   throw new Error(
     `Deployment ${deploymentId} did not finish within ${maxWaitMs / 1000}s`
   );
+}
+
+// ─── URL Resolution ────────────────────────────────────────────────────────────
+
+/**
+ * Resolves the correct public URL for a READY deployment.
+ *
+ * Vercel preview URLs (data.url) are behind auth on Hobby plans.
+ * We need the production alias — `.vercel.app` or a custom domain.
+ */
+async function resolveProductionUrl(
+  client: AxiosInstance,
+  projectId: string,
+  projectName: string,
+  deploymentData: Record<string, unknown>
+): Promise<string> {
+  // 1. Check aliases on the deployment itself
+  const aliases: string[] = Array.isArray(deploymentData.alias)
+    ? (deploymentData.alias as string[])
+    : [];
+
+  const vercelAppAlias = aliases.find((a) => a.endsWith('.vercel.app'));
+  if (vercelAppAlias) {
+    const url = `https://${vercelAppAlias}`;
+    logger.info(`[Vercel] Deployment ready → ${url} (from deployment alias)`);
+    return url;
+  }
+
+  // 2. Query project domains for the production alias (most reliable source)
+  try {
+    const { data } = await client.get(`/v9/projects/${projectId}/domains`);
+    const domains: Array<{ name: string; verified: boolean; redirect?: string }> =
+      data.domains ?? [];
+
+    // Prefer the canonical .vercel.app production domain
+    const productionDomain =
+      domains.find((d) => d.name.endsWith('.vercel.app') && !d.redirect) ??
+      domains.find((d) => !d.redirect && d.verified);
+
+    if (productionDomain) {
+      const url = `https://${productionDomain.name}`;
+      logger.info(`[Vercel] Deployment ready → ${url} (from project domains)`);
+      return url;
+    }
+  } catch {
+    logger.warn('[Vercel] Could not fetch project domains — using fallback URL');
+  }
+
+  // 3. Fallback: construct from project name (every Vercel project gets this alias)
+  const fallback = `https://${projectName}.vercel.app`;
+  logger.info(`[Vercel] Deployment ready → ${fallback} (fallback)`);
+  return fallback;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

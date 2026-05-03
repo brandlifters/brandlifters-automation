@@ -1,33 +1,25 @@
 /**
  * GitHub Service
  *
- * Handles:
- *   - Creating a public GitHub repo via the Octokit REST API
- *   - Initialising git in the local demo directory
- *   - Committing and pushing via SSH using the BrandLifters account alias
- *
- * AUTH SPLIT (important):
- *   - Octokit API calls  → GITHUB_TOKEN (REST API authentication)
- *   - git push           → SSH alias    (configured by git-identity.ts)
- *   These are intentionally separate. The token is never embedded in a remote URL.
+ * AUTH SPLIT:
+ *   - Octokit API calls → GITHUB_TOKEN (REST API)
+ *   - git push          → SSH alias (configured by git-identity.ts)
+ *   The token is never embedded in a remote URL.
  */
 
 import { Octokit } from '@octokit/rest';
 import { execSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
-import { configureGitIdentity } from '../utils/git-identity';
+import { configureGitIdentity, buildSshRemoteUrl } from '../utils/git-identity';
 import { DemoConfig, GitHubRepoResult } from '../types';
 
 function getOctokit(): Octokit {
   return new Octokit({ auth: env.GITHUB_TOKEN });
 }
 
-/**
- * Returns the login of the authenticated GitHub user.
- * Used to decide whether repo creation should target a personal account or an org.
- */
 async function getAuthenticatedLogin(octokit: Octokit): Promise<string> {
   const { data } = await octokit.users.getAuthenticated();
   return data.login;
@@ -37,11 +29,7 @@ async function getAuthenticatedLogin(octokit: Octokit): Promise<string> {
 
 /**
  * Creates the GitHub repo if it doesn't already exist.
- * Always returns the repo metadata — safe to call multiple times.
- *
- * Handles both cases automatically:
- *   - GITHUB_OWNER is the authenticated user → createForAuthenticatedUser
- *   - GITHUB_OWNER is an org the token has access to → createInOrg
+ * Always returns repo metadata — safe to call multiple times.
  */
 export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoResult> {
   const octokit = getOctokit();
@@ -49,7 +37,6 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
 
   logger.info(`[GitHub] Checking for repo: ${env.GITHUB_OWNER}/${repoName}`);
 
-  // Try to fetch the existing repo first
   try {
     const { data } = await octokit.repos.get({
       owner: env.GITHUB_OWNER,
@@ -64,17 +51,11 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
       alreadyExisted: true,
     };
   } catch (err: unknown) {
-    // 404 means the repo doesn't exist yet — create it
-    if ((err as { status?: number }).status !== 404) {
-      throw err;
-    }
+    if ((err as { status?: number }).status !== 404) throw err;
   }
 
   logger.info(`[GitHub] Creating new repo: ${repoName}`);
 
-  // Determine whether GITHUB_OWNER is the token owner or a separate org.
-  // createForAuthenticatedUser only works when the owner matches the token identity.
-  // createInOrg is required when pushing to an org (even if you're a member).
   const authenticatedLogin = await getAuthenticatedLogin(octokit);
   const isPersonalAccount =
     authenticatedLogin.toLowerCase() === env.GITHUB_OWNER.toLowerCase();
@@ -88,7 +69,7 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
     name: repoName,
     description: `BrandLifters demo — ${config.industry}: ${config.title}`,
     private: false,
-    auto_init: false, // We push our own initial commit
+    auto_init: false,
   };
 
   let data: { name: string; html_url: string; clone_url: string };
@@ -111,20 +92,11 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
   };
 }
 
-// ─── Push ──────────────────────────────────────────────────────────────────────
+// ─── Push Demo Code ────────────────────────────────────────────────────────────
 
 /**
- * Pushes the local demo directory to GitHub using SSH.
- *
- * Order of operations matters:
- *   1. git init  — ensures .git exists before any config is written
- *   2. configureGitIdentity — sets user.name/email AND the SSH remote URL
- *                             (must happen before the commit so authorship is correct)
- *   3. git add + commit
- *   4. git push via the SSH alias (no token in URL)
- *
- * Force-push is used intentionally: demo sites are non-collaborative and
- * re-running publish-demo should always reflect the current local state.
+ * Stages all files, commits, and force-pushes the demo to GitHub via SSH.
+ * Force-push is intentional — demo repos are non-collaborative.
  */
 export async function pushToGitHub(
   config: DemoConfig,
@@ -134,21 +106,15 @@ export async function pushToGitHub(
 
   logger.info(`[GitHub] Preparing push for: ${repoResult.repoName}`);
 
-  // ── Step 1: Ensure .git directory exists ──────────────────────────────────
   runGit(localPath, 'init -b main');
 
-  // ── Step 2: Apply BrandLifters git identity ────────────────────────────────
-  // This sets user.name, user.email, and the SSH origin remote — all in one call.
-  // Must run BEFORE `git commit` so the commit carries the right author identity.
   const identity = configureGitIdentity(localPath, repoResult.repoName);
   logger.info(`[GitHub] Remote: ${identity.remoteUrl}`);
 
-  // ── Step 3: Stage and commit ───────────────────────────────────────────────
   runGit(localPath, 'add -A');
 
   const hasCommits = hasExistingCommits(localPath);
   if (hasCommits) {
-    // Amend — re-runs should not accumulate meaningless history on demo repos
     runGit(
       localPath,
       `commit --allow-empty --amend -m "chore: update demo site [${config.industry}]"`
@@ -157,9 +123,6 @@ export async function pushToGitHub(
     runGit(localPath, `commit -m "feat: initial demo site [${config.industry}]"`);
   }
 
-  // ── Step 4: Push via SSH ───────────────────────────────────────────────────
-  // The remote URL was already set to git@github-brandlifters:... by configureGitIdentity.
-  // SSH resolves the alias → correct key → correct account. No token needed here.
   runGit(localPath, 'push -u origin main --force');
 
   logger.info(`[GitHub] Push complete → ${identity.remoteUrl}`);
@@ -168,10 +131,10 @@ export async function pushToGitHub(
 // ─── Deploy Trigger ────────────────────────────────────────────────────────────
 
 /**
- * Pushes an empty commit to trigger a Vercel deployment.
+ * Pushes an empty commit to trigger the first Vercel deployment.
  *
- * Vercel creates a project linked to GitHub but only deploys on a push event.
- * After `ensureVercelProject` succeeds, call this to fire that first push.
+ * Only call this when the Vercel project was just created (repoResult.alreadyExisted === false).
+ * On existing projects Vercel already triggered from the pushToGitHub call above.
  */
 export function triggerDeployCommit(config: DemoConfig): void {
   const localPath = path.resolve(config.localPath);
@@ -185,6 +148,86 @@ export function triggerDeployCommit(config: DemoConfig): void {
   runGit(localPath, 'push origin main');
 
   logger.info(`[GitHub] Trigger commit pushed`);
+}
+
+// ─── Thumbnail Hosting ─────────────────────────────────────────────────────────
+
+/**
+ * Copies the generated thumbnail into the demo repo under `.brandlifters/`,
+ * commits, and pushes. Returns the raw.githubusercontent.com URL.
+ */
+export function uploadThumbnailToGitHub(
+  config: DemoConfig,
+  thumbnailPath: string
+): string {
+  const localPath = path.resolve(config.localPath);
+  const destDir = path.join(localPath, '.brandlifters');
+  const destFile = path.join(destDir, 'thumbnail.webp');
+
+  logger.info(`[GitHub] Copying thumbnail to demo repo...`);
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(thumbnailPath, destFile);
+
+  runGit(localPath, 'add .brandlifters/thumbnail.webp');
+  runGit(
+    localPath,
+    `commit --allow-empty -m "chore: add portfolio thumbnail [${config.industry}]"`
+  );
+  runGit(localPath, 'push origin main');
+
+  const rawUrl = `https://raw.githubusercontent.com/${env.GITHUB_OWNER}/${config.repoName}/main/.brandlifters/thumbnail.webp`;
+  logger.info(`[GitHub] Thumbnail pushed → ${rawUrl}`);
+  return rawUrl;
+}
+
+// ─── Push Website Repo ─────────────────────────────────────────────────────────
+
+/**
+ * Commits all pending changes in the brandlifters-website repo and pushes.
+ * Used by the push-website command to publish website edits independently.
+ */
+export function pushWebsiteRepo(websitePath: string, message: string): void {
+  logger.info(`[GitHub] Pushing website repo: ${websitePath}`);
+
+  configureGitIdentity(websitePath, 'brandlifters-website');
+
+  runGit(websitePath, 'add -A');
+
+  const status = execSync('git status --porcelain', { cwd: websitePath }).toString().trim();
+  if (!status) {
+    logger.info('[GitHub] Website repo has no changes to push.');
+    return;
+  }
+
+  runGit(websitePath, `commit -m "${message}"`);
+  runGit(websitePath, 'push origin main');
+
+  logger.info(`[GitHub] Website repo pushed.`);
+}
+
+// ─── Push Automation Repo ──────────────────────────────────────────────────────
+
+/**
+ * Commits all pending changes in the brandlifters-automation repo and pushes.
+ * Used by the push-automation command.
+ */
+export function pushAutomationRepo(automationPath: string, message: string): void {
+  logger.info(`[GitHub] Pushing automation repo: ${automationPath}`);
+
+  configureGitIdentity(automationPath, 'brandlifters-automation');
+
+  runGit(automationPath, 'add -A');
+
+  const status = execSync('git status --porcelain', { cwd: automationPath }).toString().trim();
+  if (!status) {
+    logger.info('[GitHub] Automation repo has no changes to push.');
+    return;
+  }
+
+  runGit(automationPath, `commit -m "${message}"`);
+  runGit(automationPath, 'push origin main');
+
+  logger.info(`[GitHub] Automation repo pushed.`);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -203,3 +246,6 @@ function hasExistingCommits(cwd: string): boolean {
     return false;
   }
 }
+
+// Re-export for scripts that only need the URL builder
+export { buildSshRemoteUrl };

@@ -1,212 +1,195 @@
 /**
- * publish-demo CLI Script
+ * publish-demo — Full pipeline for a NEW demo site
  *
- * Entry point for: npm run publish-demo -- --path /path/to/demo
+ * Steps:
+ *   1. Load + validate demo.config.json
+ *   2. Create GitHub repo (if it doesn't exist)
+ *   3. Push demo code to GitHub
+ *   4. Create Vercel project linked to the GitHub repo (if it doesn't exist)
+ *   5. Trigger deployment ONLY if project is new, then wait for it to go live
+ *   6. Capture screenshot + generate WebP thumbnail
+ *   7. Push thumbnail to demo repo, update website demos.json, push website
  *
- * PIPELINE:
- *   1. Load + validate demo.config.json from the demo directory
- *   2. Ensure the GitHub repo exists (create if not)
- *   3. Push the local demo code to GitHub
- *   4. Ensure the Vercel project exists and is linked to the GitHub repo
- *   5. Trigger a deployment (empty commit) and wait for the site to go live
- *   6. Capture a screenshot and generate a thumbnail
- *   7. Create a Framer CMS item and publish the portfolio
- *
- * Use --github-only to stop after step 3 (useful when Vercel isn't configured yet).
+ * Usage:
+ *   npm run publish-demo -- --path "C:\path\to\demo"
+ *   npm run publish-demo -- --path "..." --github-only
+ *   npm run publish-demo -- --path "..." --no-portfolio
  */
 
 import path from 'path';
+import fs from 'fs';
 import { loadDemoConfig } from '../utils/config-loader';
-import { ensureGitHubRepo, pushToGitHub, triggerDeployCommit } from '../services/github';
+import {
+  ensureGitHubRepo,
+  pushToGitHub,
+  triggerDeployCommit,
+  uploadThumbnailToGitHub,
+} from '../services/github';
 import { ensureVercelProject, waitForDeployment } from '../services/vercel';
 import { captureScreenshot } from '../services/screenshot';
 import { generateThumbnail } from '../services/thumbnail';
-import { createFramerCMSItem, uploadThumbnailToFramer, publishFramerSite } from '../services/framer';
+import { publishToWebsitePortfolio } from '../services/website-portfolio';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
 import { PublishPipelineState } from '../types';
-import fs from 'fs';
 
-// ─── CLI Argument Parsing ───────────────────────────────────────────────────────
+// ─── CLI Args ──────────────────────────────────────────────────────────────────
 
-function getArgs(): { demoPath: string; githubOnly: boolean } {
+function getArgs(): { demoPath: string; githubOnly: boolean; noPortfolio: boolean } {
   const args = process.argv.slice(2);
-
-  // npm strips --path and --github-only when passed via `npm run x -- --flag value`.
-  // To work around this, also check the DEMO_PATH and GITHUB_ONLY env vars,
-  // and fall back to accepting the first positional argument as the path.
   const pathFlag = args.indexOf('--path');
-  const githubOnly = args.includes('--github-only') || process.env.GITHUB_ONLY === '1';
+  const githubOnly = args.includes('--github-only');
+  const noPortfolio = args.includes('--no-portfolio');
 
   let demoPath: string | undefined;
 
   if (pathFlag !== -1 && args[pathFlag + 1]) {
-    // Normal case: --path was not stripped by npm
     demoPath = path.resolve(args[pathFlag + 1]);
   } else if (process.env.DEMO_PATH) {
-    // Env var fallback: set DEMO_PATH=... before running
     demoPath = path.resolve(process.env.DEMO_PATH);
   } else {
-    // npm strips --path and passes its value as the first positional arg
-    const positional = args.find(a => !a.startsWith('--'));
-    if (positional) {
-      demoPath = path.resolve(positional);
-    }
+    const positional = args.find((a) => !a.startsWith('--'));
+    if (positional) demoPath = path.resolve(positional);
   }
 
   if (!demoPath) {
-    // Last resort: look for demo.config.json in the current working directory
-    const cwdConfigPath = path.join(process.cwd(), 'demo.config.json');
-    if (fs.existsSync(cwdConfigPath)) {
-      return { demoPath: process.cwd(), githubOnly };
+    if (fs.existsSync(path.join(process.cwd(), 'demo.config.json'))) {
+      return { demoPath: process.cwd(), githubOnly, noPortfolio };
     }
-
     console.error(
       '\nUsage:\n' +
-        '  npx ts-node src/scripts/publish-demo.ts --path "C:\\path\\to\\demo" [--github-only]\n' +
-        '\nOr via env vars (avoids npm flag stripping):\n' +
-        '  DEMO_PATH="C:\\path\\to\\demo" GITHUB_ONLY=1 npm run publish-demo\n'
+        '  npm run publish-demo -- --path "C:\\path\\to\\demo" [--github-only] [--no-portfolio]\n'
     );
     process.exit(1);
   }
 
-  return { demoPath, githubOnly };
+  return { demoPath, githubOnly, noPortfolio };
 }
 
-// ─── Main ───────────────────────────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { demoPath, githubOnly } = getArgs();
+  const { demoPath, githubOnly, noPortfolio } = getArgs();
 
-  // ── State tracker — used for logging and error recovery ──
-  const state: PublishPipelineState = {
-    config: {} as never, // Will be populated in step 1
-    errors: [],
-  };
+  const state: PublishPipelineState = { config: {} as never, errors: [] };
 
   try {
-    // ── Step 1: Load config ────────────────────────────────────────────────────
     logger.info('═══════════════════════════════════════════════');
-    logger.info('  BrandLifters — publish-demo');
-    if (githubOnly) logger.info('  Mode: --github-only (Vercel skipped)');
+    logger.info('  BrandLifters — publish-demo (new)');
+    if (githubOnly) logger.info('  Mode: --github-only');
+    if (noPortfolio) logger.info('  Mode: --no-portfolio');
     logger.info('═══════════════════════════════════════════════');
 
+    // Step 1
     state.config = loadDemoConfig(demoPath);
-
     logger.info(`Demo: ${state.config.title} (${state.config.industry})`);
-    logger.info(`Repo: ${state.config.repoName}`);
 
-    // ── Step 2: GitHub repo ────────────────────────────────────────────────────
-    const totalSteps = githubOnly ? 3 : 7;
-    logger.info(`\n[Step 2/${totalSteps}] Ensuring GitHub repo...`);
+    // Step 2
+    const totalSteps = githubOnly ? 3 : noPortfolio ? 5 : 7;
+    logger.info(`\n[2/${totalSteps}] Ensuring GitHub repo...`);
     state.github = await ensureGitHubRepo(state.config);
 
-    // ── Step 3: Push code ──────────────────────────────────────────────────────
-    logger.info(`\n[Step 3/${totalSteps}] Pushing code to GitHub...`);
+    // Step 3
+    logger.info(`\n[3/${totalSteps}] Pushing code to GitHub...`);
     await pushToGitHub(state.config, state.github);
 
-    if (githubOnly) {
-      printSuccess(state, githubOnly);
-      return;
-    }
+    if (githubOnly) { printSuccess(state, githubOnly, noPortfolio); return; }
 
-    // ── Step 4: Vercel project ─────────────────────────────────────────────────
-    logger.info(`\n[Step 4/${totalSteps}] Ensuring Vercel project...`);
+    // Step 4
+    logger.info(`\n[4/${totalSteps}] Ensuring Vercel project...`);
     state.vercel = await ensureVercelProject(state.config, env.GITHUB_OWNER);
 
-    // ── Step 5: Trigger deployment + wait for live URL ─────────────────────────
-    logger.info(`\n[Step 5/${totalSteps}] Triggering deployment and waiting for site to go live...`);
+    // Step 5 — only trigger an empty commit if the Vercel project was just created.
+    // For existing projects, the push in step 3 already triggered a deployment.
+    logger.info(`\n[5/${totalSteps}] Waiting for Vercel deployment...`);
     const triggerTime = Date.now();
-    triggerDeployCommit(state.config);
+
+    if (!state.vercel.alreadyExisted) {
+      logger.info('[Vercel] New project — pushing trigger commit...');
+      triggerDeployCommit(state.config);
+    } else {
+      logger.info('[Vercel] Existing project — code push already triggered deployment.');
+    }
+
     state.deploymentUrl = await waitForDeployment(
       state.vercel.projectId,
       state.config.vercelProjectName,
       triggerTime
     );
 
-    // ── Step 6: Screenshot + thumbnail ────────────────────────────────────────
-    logger.info(`\n[Step 6/${totalSteps}] Capturing screenshot and generating thumbnail...`);
+    if (noPortfolio) {
+      state.completedAt = new Date().toISOString();
+      printSuccess(state, githubOnly, noPortfolio);
+      return;
+    }
+
+    // Step 6
+    logger.info(`\n[6/${totalSteps}] Capturing screenshot and generating thumbnail...`);
     const screenshotPath = await captureScreenshot(state.deploymentUrl, state.config.name);
     const thumbnailPath = await generateThumbnail(screenshotPath, state.config.name);
 
-    // ── Step 7: Framer CMS ────────────────────────────────────────────────────
-    logger.info(`\n[Step 7/${totalSteps}] Uploading to Framer CMS and publishing...`);
-    state.thumbnailUrl = await uploadThumbnailToFramer(thumbnailPath);
+    // Step 7
+    logger.info(`\n[7/${totalSteps}] Uploading thumbnail and updating website portfolio...`);
+    state.thumbnailUrl = uploadThumbnailToGitHub(state.config, thumbnailPath);
 
-    const framerResult = await createFramerCMSItem({
-      title: state.config.title,
+    await publishToWebsitePortfolio({
+      id: state.config.name,
       industry: state.config.industry,
+      name: state.config.title,
       description: state.config.description,
-      tags: (state.config.tags ?? []).join(', '),
-      liveUrl: state.deploymentUrl,
+      features: state.config.features ?? [],
+      demoUrl: state.deploymentUrl,
       thumbnailUrl: state.thumbnailUrl,
-      slug: state.config.name,
+      accentFrom: state.config.accentFrom ?? '#0d8e8b',
+      accentTo: state.config.accentTo ?? '#22d3ee',
+      publishedAt: new Date().toISOString(),
     });
-    state.framerItemId = framerResult.itemId;
 
-    await publishFramerSite();
-
-    // ── Done ───────────────────────────────────────────────────────────────────
+    state.portfolioUpdated = true;
     state.completedAt = new Date().toISOString();
-    printSuccess(state, githubOnly);
+    printSuccess(state, githubOnly, noPortfolio);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     state.errors.push(message);
-
     logger.error(`\n✖ Publish failed:\n  ${message}`);
-
-    if (err instanceof Error && err.stack) {
-      logger.debug(err.stack);
-    }
-
-    // Write the pipeline state to a debug file for post-mortem inspection
-    writeStateSnapshot(state);
+    if (err instanceof Error && err.stack) logger.debug(err.stack);
+    writeSnapshot(state);
     process.exit(1);
   }
 }
 
-// ─── Output Helpers ─────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function printSuccess(state: PublishPipelineState, githubOnly: boolean): void {
+function printSuccess(
+  state: PublishPipelineState,
+  githubOnly: boolean,
+  noPortfolio: boolean
+): void {
   const { config, github, vercel, deploymentUrl, thumbnailUrl } = state;
-
   logger.info('\n═══════════════════════════════════════════════');
-  logger.info('  ✔ Publish complete!');
+  logger.info('  ✔ publish-demo complete!');
   logger.info('═══════════════════════════════════════════════');
-  logger.info(`  Demo:     ${config.title}`);
-  logger.info(`  Industry: ${config.industry}`);
+  logger.info(`  Demo:     ${config.title} (${config.industry})`);
   logger.info(`  GitHub:   ${github?.htmlUrl}`);
-
-  if (githubOnly) {
-    logger.info('');
-    logger.info('  Stopped after GitHub push (--github-only).');
-    logger.info('  Next: add VERCEL_TOKEN to .env and re-run without --github-only');
-  } else {
+  if (!githubOnly) {
     logger.info(`  Vercel:   ${vercel?.projectName}`);
     logger.info(`  Live URL: ${deploymentUrl}`);
-    logger.info(`  Thumbnail: ${thumbnailUrl}`);
-    logger.info('');
-    logger.info('  Portfolio updated — your demo is now live on Framer.');
   }
-
+  if (!githubOnly && !noPortfolio) {
+    logger.info(`  Thumbnail: ${thumbnailUrl}`);
+    logger.info(`  Portfolio updated — demo is live.`);
+  }
   logger.info('═══════════════════════════════════════════════\n');
 }
 
-function writeStateSnapshot(state: PublishPipelineState): void {
+function writeSnapshot(state: PublishPipelineState): void {
   try {
-    const snapshotDir = './output/snapshots';
-    fs.mkdirSync(snapshotDir, { recursive: true });
-    const filename = `${state.config?.name ?? 'unknown'}-${Date.now()}.json`;
-    fs.writeFileSync(
-      path.join(snapshotDir, filename),
-      JSON.stringify(state, null, 2)
-    );
-    logger.info(`Debug snapshot written to ${snapshotDir}/${filename}`);
-  } catch {
-    // Non-fatal — best effort only
-  }
+    const dir = './output/snapshots';
+    fs.mkdirSync(dir, { recursive: true });
+    const file = `${state.config?.name ?? 'unknown'}-${Date.now()}.json`;
+    fs.writeFileSync(path.join(dir, file), JSON.stringify(state, null, 2));
+    logger.info(`Debug snapshot written to ${dir}/${file}`);
+  } catch { /* non-fatal */ }
 }
-
-// ─── Run ────────────────────────────────────────────────────────────────────────
 
 main();
