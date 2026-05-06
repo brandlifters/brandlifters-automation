@@ -8,6 +8,9 @@
 
     "publish-demo": "tsx src/scripts/publish-demo.ts",
     "update-demo": "tsx src/scripts/update-demo.ts",
+    "deploy-customer-site": "tsx src/scripts/deploy-customer-site.ts",
+    "push-customer-site": "tsx src/scripts/push-customer-site.ts",
+    "finalize-customer-site": "tsx src/scripts/finalize-customer-site.ts",
     "push-website": "tsx src/scripts/push-website.ts",
     "push-automation": "tsx src/scripts/push-automation.ts",
     "configure-repo": "tsx src/scripts/configure-repo.ts"

@@ -6,11 +6,26 @@ All commands are run from inside the `brandlifters-automation` directory.
 
 ## Quick Reference
 
+### Demo sites (BrandLifters portfolio)
+
 | Goal | Command |
 |---|---|
 | Publish a brand-new demo (full pipeline) | `npm run publish-demo -- --path "C:\...\demo-name"` |
 | Push code updates to an existing demo | `npm run update-demo -- --path "C:\...\demo-name"` |
 | Push code updates only (no screenshot) | `npm run update-demo -- --path "C:\...\demo-name" --code-only` |
+
+### Customer websites
+
+| Goal | Command |
+|---|---|
+| First deploy — GitHub + Vercel, wait for live | `npm run deploy-customer-site -- --path "C:\...\site-name"` |
+| Push code updates to an existing customer site | `npm run push-customer-site -- --path "C:\...\site-name"` |
+| Get Vercel URL + screenshot + add to portfolio | `npm run finalize-customer-site -- --path "C:\...\site-name"` |
+
+### Shared
+
+| Goal | Command |
+|---|---|
 | Push changes to the brandlifters website | `npm run push-website` |
 | Push changes to this automation repo | `npm run push-automation` |
 | Fix git identity on any repo | `npm run configure-repo -- --path "C:\...\repo"` |
@@ -80,6 +95,55 @@ npm run update-demo -- --path "C:\Users\abdul\brandlifters-material\brandlifters
 ```powershell
 npm run update-demo -- --path "C:\Users\abdul\brandlifters-material\brandlifters-demo\barber-demo" --code-only
 ```
+
+---
+
+## deploy-customer-site
+
+**When to use:** A brand-new customer website that has never been deployed. Creates the GitHub repo, links Vercel, and waits for the site to go live. Does not take a screenshot or update the portfolio — run `finalize-customer-site` once you've reviewed the live site.
+
+Site directories must contain a `site.config.json` (same fields as `demo.config.json`).
+
+```powershell
+npm run deploy-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+```
+
+**Steps it runs:**
+1. Load and validate `site.config.json`
+2. Create GitHub repo (skipped if it already exists)
+3. Push site code to GitHub
+4. Create Vercel project linked to the repo (skipped if it already exists)
+5. Trigger deployment (only if Vercel project was just created) and wait until live
+
+---
+
+## push-customer-site
+
+**When to use:** A customer site that is already live on GitHub + Vercel and you've made code changes. Pushes the updated code — Vercel picks it up automatically via the GitHub integration. No polling, no empty commit.
+
+```powershell
+npm run push-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+```
+
+**Steps it runs:**
+1. Load `site.config.json`
+2. Push updated code to GitHub (Vercel redeploys automatically)
+
+---
+
+## finalize-customer-site
+
+**When to use:** After `deploy-customer-site` (once you've reviewed the live site), or any time you want to refresh the portfolio card for a customer site. Fetches the current production URL from Vercel, captures a screenshot, generates a thumbnail, and adds or updates the entry in the brandlifters-website portfolio.
+
+```powershell
+npm run finalize-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+```
+
+**Steps it runs:**
+1. Load `site.config.json`
+2. Fetch current production URL from Vercel (no new deployment triggered)
+3. Capture full-page screenshot, generate 1200×675 WebP thumbnail
+4. Push thumbnail to site repo, update `demos.json` on the website, push website
 
 ---
 

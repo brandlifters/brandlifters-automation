@@ -227,6 +227,53 @@ async function resolveProductionUrl(
   return fallback;
 }
 
+// ─── Production URL Lookup ─────────────────────────────────────────────────────
+
+/**
+ * Returns the current production URL for an already-deployed Vercel project
+ * without triggering a new deployment.
+ *
+ * Resolution order:
+ *   1. `.vercel.app` domain from project domains API (canonical, no redirect)
+ *   2. Any other verified non-redirect domain
+ *   3. Fallback: `https://<vercelProjectName>.vercel.app`
+ */
+export async function getProjectProductionUrl(vercelProjectName: string): Promise<string> {
+  const client = getVercelClient();
+
+  logger.info(`[Vercel] Fetching production URL for: ${vercelProjectName}`);
+
+  let projectId: string = vercelProjectName;
+  try {
+    const { data } = await client.get(`/v9/projects/${vercelProjectName}`);
+    projectId = data.id;
+  } catch {
+    logger.warn(`[Vercel] Could not fetch project metadata — using name as ID`);
+  }
+
+  try {
+    const { data } = await client.get(`/v9/projects/${projectId}/domains`);
+    const domains: Array<{ name: string; verified: boolean; redirect?: string }> =
+      data.domains ?? [];
+
+    const productionDomain =
+      domains.find((d) => d.name.endsWith('.vercel.app') && !d.redirect) ??
+      domains.find((d) => !d.redirect && d.verified);
+
+    if (productionDomain) {
+      const url = `https://${productionDomain.name}`;
+      logger.info(`[Vercel] Production URL: ${url}`);
+      return url;
+    }
+  } catch {
+    logger.warn('[Vercel] Could not fetch project domains — using fallback URL');
+  }
+
+  const fallback = `https://${vercelProjectName}.vercel.app`;
+  logger.info(`[Vercel] Production URL (fallback): ${fallback}`);
+  return fallback;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {

@@ -1,8 +1,10 @@
 /**
- * Loads and validates demo.config.json from a demo website directory.
+ * Loads and validates config files from demo and customer site directories.
  *
- * This is used both by the CLI publish command (reads from the demo's local
- * path) and by the webhook handler (re-reads config after deployment).
+ * loadDemoConfig — reads demo.config.json (for demo sites)
+ * loadSiteConfig — reads site.config.json (for customer websites)
+ *
+ * Both use the same schema and return the same DemoConfig type.
  */
 
 import fs from 'fs';
@@ -40,22 +42,38 @@ const DemoConfigSchema = z.object({
  * @throws         If file is missing or any required fields fail validation.
  */
 export function loadDemoConfig(demoDir: string): DemoConfig {
-  const configPath = path.join(demoDir, 'demo.config.json');
+  return loadConfigFile(demoDir, 'demo.config.json');
+}
+
+/**
+ * Reads site.config.json from the given directory and validates its contents.
+ * Used for customer websites (same schema as demo.config.json).
+ *
+ * @param siteDir  Absolute path to the customer site root directory.
+ * @returns        Validated DemoConfig object.
+ * @throws         If file is missing or any required fields fail validation.
+ */
+export function loadSiteConfig(siteDir: string): DemoConfig {
+  return loadConfigFile(siteDir, 'site.config.json');
+}
+
+function loadConfigFile(dir: string, filename: string): DemoConfig {
+  const configPath = path.join(dir, filename);
 
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `demo.config.json not found at ${configPath}.\n` +
-        'Every demo website repo must include this file. See demo.config.example.json for reference.'
+      `${filename} not found at ${configPath}.\n` +
+        `Every site directory must include this file. See demo.config.example.json for the field reference.`
     );
   }
 
-  logger.info(`Loading demo config from ${configPath}`);
+  logger.info(`Loading config from ${configPath}`);
 
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   } catch (err) {
-    throw new Error(`Failed to parse demo.config.json: ${(err as Error).message}`);
+    throw new Error(`Failed to parse ${filename}: ${(err as Error).message}`);
   }
 
   const result = DemoConfigSchema.safeParse(raw);
@@ -63,7 +81,7 @@ export function loadDemoConfig(demoDir: string): DemoConfig {
     const issues = result.error.issues
       .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
       .join('\n');
-    throw new Error(`demo.config.json validation failed:\n${issues}`);
+    throw new Error(`${filename} validation failed:\n${issues}`);
   }
 
   logger.info(`Config loaded: [${result.data.industry}] ${result.data.title}`);

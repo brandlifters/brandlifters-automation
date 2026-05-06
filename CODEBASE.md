@@ -41,6 +41,9 @@ brandlifters-automation/
 │   └── scripts/
 │       ├── publish-demo.ts           # Full pipeline for a brand-new demo (7 steps)
 │       ├── update-demo.ts            # Updates an existing demo (code push + optional refresh)
+│       ├── deploy-customer-site.ts   # First deploy for a new customer website (GitHub + Vercel)
+│       ├── push-customer-site.ts     # Push code updates to an existing customer site
+│       ├── finalize-customer-site.ts # Fetch Vercel URL + screenshot + portfolio for a customer site
 │       ├── push-website.ts           # Commits + pushes the brandlifters-website repo
 │       ├── push-automation.ts        # Commits + pushes this automation repo
 │       └── configure-repo.ts         # Applies git identity to any existing repo manually
@@ -115,6 +118,8 @@ Shared interfaces: `DemoConfig`, `GitHubRepoResult`, `VercelProjectResult`, `Scr
 ### src/utils/config-loader.ts
 `loadDemoConfig(demoDir)` — reads and Zod-validates `demo.config.json` from a given directory. Throws with a clear message if the file is missing or invalid.
 
+`loadSiteConfig(siteDir)` — same as above but reads `site.config.json`. Used by the customer website scripts. Both functions share the same Zod schema and return `DemoConfig`.
+
 ### src/utils/git-identity.ts
 `configureGitIdentity(repoPath, repoName?)` — sets local `git config user.name/email` and the SSH origin remote for any repo under `BRANDLIFTERS_PARENT_DIR`. Idempotent. Called automatically before every `git push` in `github.ts`.
 
@@ -134,6 +139,7 @@ Winston logger. Logs to console (colored) and `./output/logs/automation.log`. Le
 ### src/services/vercel.ts
 - `ensureVercelProject(config, githubOwner)` — creates Vercel project linked to GitHub repo if it doesn't exist; returns `alreadyExisted`
 - `waitForDeployment(projectId, projectName, since, maxWaitMs?)` — polls `/v6/deployments` until a deployment after `since` appears, then polls `/v13/deployments/:id` until READY; resolves production URL in this order: deployment alias → project domains API → fallback `projectName.vercel.app`
+- `getProjectProductionUrl(vercelProjectName)` — fetches the current production URL for an already-live project without triggering a new deployment. Used by `finalize-customer-site`.
 
 ### src/services/screenshot.ts
 `captureScreenshot(url, siteName)` — launches Chromium (headless), navigates to URL, waits for `networkidle` + 2s, takes full-page screenshot at 1440×900. Returns absolute PNG path.
@@ -160,6 +166,21 @@ Flags: `--path`, `--github-only`, `--no-portfolio`
 For **existing** demos. Verifies Vercel project exists before starting (errors if not — use `publish-demo` instead). Pushes code, waits for deploy, optionally refreshes screenshot + portfolio.
 
 Flags: `--path`, `--code-only`
+
+### deploy-customer-site.ts
+First-time deploy for a **new customer website**. Reads `site.config.json`. Creates GitHub repo, pushes code, creates Vercel project, triggers deploy (only if new project), and waits for READY. No screenshot or portfolio — run `finalize-customer-site` after reviewing the live site.
+
+Flags: `--path`
+
+### push-customer-site.ts
+For **existing customer sites** with code changes. Reads `site.config.json`. Pushes code to GitHub — Vercel redeploys automatically. No polling, no empty commit.
+
+Flags: `--path`
+
+### finalize-customer-site.ts
+Portfolio step for a **live customer site**. Reads `site.config.json`. Fetches the current production URL from Vercel (no new deploy triggered), captures screenshot, generates thumbnail, uploads to the site repo, and adds/updates the entry in `demos.json` on the website.
+
+Flags: `--path`
 
 ### push-website.ts
 Stages + commits all pending changes in the website repo and pushes to GitHub.
@@ -191,6 +212,24 @@ Load config → Ensure GitHub repo → Push code → Ensure Vercel project
 ```
 Load config → Verify Vercel project exists → Push code → Poll until READY
   → [unless --code-only] Screenshot → Thumbnail → Upload thumbnail → Update demos.json → Push website
+```
+
+### deploy-customer-site (new customer website — step 1)
+```
+Load site.config.json → Ensure GitHub repo → Push code → Ensure Vercel project
+  → [if new project] trigger empty commit → Poll until READY → print live URL
+```
+
+### push-customer-site (existing customer site — code update)
+```
+Load site.config.json → Resolve GitHub repo → Push code
+  (Vercel redeploys automatically via GitHub integration)
+```
+
+### finalize-customer-site (existing customer site — portfolio step)
+```
+Load site.config.json → Fetch production URL from Vercel (no deploy triggered)
+  → Screenshot → Thumbnail → Upload thumbnail → Update demos.json → Push website
 ```
 
 ---
