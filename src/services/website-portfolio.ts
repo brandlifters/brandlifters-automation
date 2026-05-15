@@ -19,8 +19,26 @@ import type { LiveDemo } from './website-portfolio.types';
 export type { LiveDemo };
 
 const DEMOS_JSON_RELATIVE = 'src/lib/data/demos.json';
+const THUMBNAILS_RELATIVE = 'public/portfolio/thumbnails';
 
 // ─── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Copies a thumbnail WebP into the website repo's public/portfolio/thumbnails/
+ * directory and returns the root-relative URL path (e.g. /portfolio/thumbnails/site.webp).
+ * The file is committed when publishToWebsitePortfolio is called next.
+ */
+export function copyThumbnailToWebsiteRepo(siteName: string, thumbnailPath: string): string {
+  const websitePath = resolveWebsitePath();
+  const destDir = path.join(websitePath, THUMBNAILS_RELATIVE);
+  const destFile = path.join(destDir, `${siteName}.webp`);
+
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(thumbnailPath, destFile);
+
+  logger.info(`[WebsitePortfolio] Thumbnail copied to: ${destFile}`);
+  return `/portfolio/thumbnails/${siteName}.webp`;
+}
 
 /**
  * Adds or updates a demo entry in the website's demos.json, then
@@ -81,6 +99,7 @@ function writeDemosJson(demosPath: string, demos: LiveDemo[]): void {
 
 function commitAndPush(websitePath: string, demo: LiveDemo): void {
   runGit(websitePath, `add ${DEMOS_JSON_RELATIVE}`);
+  runGit(websitePath, `add ${THUMBNAILS_RELATIVE}`);
 
   const status = execSync('git status --porcelain', { cwd: websitePath }).toString().trim();
   if (!status) {

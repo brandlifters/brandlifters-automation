@@ -18,8 +18,7 @@ import { loadSiteConfig } from '../utils/config-loader';
 import { getProjectProductionUrl } from '../services/vercel';
 import { captureScreenshot } from '../services/screenshot';
 import { generateThumbnail } from '../services/thumbnail';
-import { uploadThumbnailToGitHub } from '../services/github';
-import { publishToWebsitePortfolio } from '../services/website-portfolio';
+import { copyThumbnailToWebsiteRepo, publishToWebsitePortfolio } from '../services/website-portfolio';
 import { logger } from '../utils/logger';
 
 // ─── CLI Args ──────────────────────────────────────────────────────────────────
@@ -78,8 +77,8 @@ async function main() {
     const thumbnailPath = await generateThumbnail(screenshotPath, config.name);
 
     // Step 4
-    logger.info('\n[4/4] Uploading thumbnail and updating website portfolio...');
-    const thumbnailUrl = uploadThumbnailToGitHub(config, thumbnailPath);
+    logger.info('\n[4/4] Copying thumbnail to website repo and updating portfolio...');
+    const thumbnailUrl = copyThumbnailToWebsiteRepo(config.name, thumbnailPath);
 
     await publishToWebsitePortfolio({
       id: config.name,
@@ -100,7 +99,7 @@ async function main() {
     logger.info('═══════════════════════════════════════════════');
     logger.info(`  Site:      ${config.title}`);
     logger.info(`  Live URL:  ${deploymentUrl}`);
-    logger.info(`  Thumbnail: ${thumbnailUrl}`);
+    logger.info(`  Thumbnail: ${thumbnailUrl} (served from brandlifters-website)`);
     logger.info('  Portfolio updated — site is live on the website.');
     logger.info('═══════════════════════════════════════════════\n');
   } catch (err) {
