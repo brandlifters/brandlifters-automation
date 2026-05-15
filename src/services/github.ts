@@ -31,7 +31,7 @@ async function getAuthenticatedLogin(octokit: Octokit): Promise<string> {
  * Creates the GitHub repo if it doesn't already exist.
  * Always returns repo metadata — safe to call multiple times.
  */
-export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoResult> {
+export async function ensureGitHubRepo(config: DemoConfig, isPrivate = false): Promise<GitHubRepoResult> {
   const octokit = getOctokit();
   const { repoName } = config;
 
@@ -68,7 +68,7 @@ export async function ensureGitHubRepo(config: DemoConfig): Promise<GitHubRepoRe
   const repoPayload = {
     name: repoName,
     description: `BrandLifters demo — ${config.industry}: ${config.title}`,
-    private: false,
+    private: isPrivate,
     auto_init: false,
   };
 

@@ -74,7 +74,7 @@ async function main() {
 
     // Step 2
     logger.info('\n[2/5] Ensuring GitHub repo...');
-    const github = await ensureGitHubRepo(config);
+    const github = await ensureGitHubRepo(config, false);
 
     // Step 3
     logger.info('\n[3/5] Pushing code to GitHub...');

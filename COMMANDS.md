@@ -105,7 +105,7 @@ npm run update-demo -- --path "C:\Users\abdul\brandlifters-material\brandlifters
 Site directories must contain a `site.config.json` (same fields as `demo.config.json`).
 
 ```powershell
-npm run deploy-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+npm run deploy-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-websites\acme-plumbing"
 ```
 
 **Steps it runs:**
@@ -122,7 +122,7 @@ npm run deploy-customer-site -- --path "C:\Users\abdul\brandlifters-material\cus
 **When to use:** A customer site that is already live on GitHub + Vercel and you've made code changes. Pushes the updated code — Vercel picks it up automatically via the GitHub integration. No polling, no empty commit.
 
 ```powershell
-npm run push-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+npm run push-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-websites\acme-plumbing"
 ```
 
 **Steps it runs:**
@@ -136,7 +136,7 @@ npm run push-customer-site -- --path "C:\Users\abdul\brandlifters-material\custo
 **When to use:** After `deploy-customer-site` (once you've reviewed the live site), or any time you want to refresh the portfolio card for a customer site. Fetches the current production URL from Vercel, captures a screenshot, generates a thumbnail, and adds or updates the entry in the brandlifters-website portfolio.
 
 ```powershell
-npm run finalize-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-sites\acme-plumbing"
+npm run finalize-customer-site -- --path "C:\Users\abdul\brandlifters-material\customer-websites\acme-plumbing"
 ```
 
 **Steps it runs:**

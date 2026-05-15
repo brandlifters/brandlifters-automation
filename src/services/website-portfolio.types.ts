@@ -13,4 +13,5 @@ export interface LiveDemo {
   accentFrom: string;
   accentTo: string;
   publishedAt: string;
+  isCustomerSite?: boolean;
 }

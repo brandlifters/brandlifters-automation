@@ -92,6 +92,7 @@ async function main() {
       accentFrom: config.accentFrom ?? '#0d8e8b',
       accentTo: config.accentTo ?? '#22d3ee',
       publishedAt: new Date().toISOString(),
+      isCustomerSite: true,
     });
 
     logger.info('\n═══════════════════════════════════════════════');
