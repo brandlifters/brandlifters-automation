@@ -8,6 +8,7 @@ export interface LiveDemo {
   name: string;
   description: string;
   features: string[];
+  tags?: string[];
   demoUrl: string;
   thumbnailUrl: string;
   accentFrom: string;

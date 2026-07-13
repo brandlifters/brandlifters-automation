@@ -67,9 +67,15 @@ async function main() {
     logger.info(`Site: ${config.title} (${config.industry})`);
 
     // Step 2 — resolve production URL without triggering a new deployment
-    logger.info('\n[2/4] Fetching production URL from Vercel...');
-    const deploymentUrl = await getProjectProductionUrl(config.vercelProjectName);
-    logger.info(`[2/4] Live URL: ${deploymentUrl}`);
+    let deploymentUrl: string;
+    if (config.previewUrl) {
+      deploymentUrl = config.previewUrl;
+      logger.info(`\n[2/4] Using custom domain from config: ${deploymentUrl}`);
+    } else {
+      logger.info('\n[2/4] Fetching production URL from Vercel...');
+      deploymentUrl = await getProjectProductionUrl(config.vercelProjectName);
+      logger.info(`[2/4] Live URL: ${deploymentUrl}`);
+    }
 
     // Step 3
     logger.info('\n[3/4] Capturing screenshot and generating thumbnail...');
@@ -86,6 +92,7 @@ async function main() {
       name: config.title,
       description: config.description,
       features: config.features ?? [],
+      tags: config.tags,
       demoUrl: deploymentUrl,
       thumbnailUrl,
       accentFrom: config.accentFrom ?? '#0d8e8b',
